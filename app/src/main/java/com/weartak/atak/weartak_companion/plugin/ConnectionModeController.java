@@ -25,6 +25,7 @@ public final class ConnectionModeController {
     private Mode mode = Mode.TRADITIONAL;
     private long generation;
     private boolean running;
+    private boolean gatewayPurpose;
 
     public ConnectionModeController(Transport transport) { this.transport = transport; }
 
@@ -35,9 +36,11 @@ public final class ConnectionModeController {
     }
 
     public Mode getMode() { return mode; }
+    public boolean isPairingLocked() { return gatewayPurpose; }
     public boolean isCurrent(long token) { return running && generation == token; }
 
     public void start(Mode selected) {
+        if (gatewayPurpose) selected = Mode.TRADITIONAL;
         if (running && mode == selected) return;
         stop();
         mode = selected;
@@ -45,7 +48,22 @@ public final class ConnectionModeController {
         transport.start(mode, generation);
     }
 
-    public void select(Mode selected) { start(selected); }
+    public void start(Mode selected, boolean gatewayPurpose) {
+        this.gatewayPurpose = gatewayPurpose;
+        start(selected);
+    }
+
+    public void select(Mode selected) {
+        if (!gatewayPurpose) start(selected);
+    }
+
+    public void changePurpose(boolean gatewayPurpose) {
+        this.gatewayPurpose = gatewayPurpose;
+        stop();
+        if (gatewayPurpose) mode = Mode.TRADITIONAL;
+        running = true;
+        transport.start(mode, generation);
+    }
     public void restart() {
         stop();
         running = true;

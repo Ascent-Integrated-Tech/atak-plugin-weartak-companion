@@ -62,6 +62,9 @@ public class WearTakBleClient {
     private static final String KEY_PAIRED_CALLSIGN = "paired_callsign";
 
     private final Context baseContext;
+    private final String pairingPreferences;
+    private final String retryPreferences;
+    private final boolean gatewayOnly;
     private Context appContext;
 
     private BluetoothAdapter bluetoothAdapter;
@@ -117,8 +120,19 @@ public class WearTakBleClient {
                     return true;
                 }
                 @Override public boolean probe() {
-                    return getReadySession() >= 0
-                            && writeJsonLineToWatch("{\"msg_type\":\"request_watch_info\"}");
+                    if (getReadySession() < 0) return false;
+                    if (!gatewayOnly)
+                        return writeJsonLineToWatch("{\"msg_type\":\"request_watch_info\"}");
+                    String session = gatewayHealthSession;
+                    if (session == null) return false;
+                    try {
+                        String hello = new JSONObject().put("msg_type", "gateway_hello")
+                                .put("version", 1).put("session", session).toString();
+                        return writeJsonLineToWatch(hello);
+                    } catch (org.json.JSONException e) {
+                        error("Gateway health probe could not be built: " + e.getMessage());
+                        return false;
+                    }
                 }
                 @Override public void reset() {
                     resetSession("automatic reconnect timeout");
@@ -132,7 +146,7 @@ public class WearTakBleClient {
 
     // RX framing: newline-delimited JSON
     private final Object rxLock = new Object();
-    private final StringBuilder rxBuffer = new StringBuilder(4096);
+    private final BleJsonFramer rxBuffer = new BleJsonFramer();
 
     private static final int DESIRED_MTU = 512;
     private volatile boolean mtuNegotiated = false;
@@ -171,26 +185,42 @@ public class WearTakBleClient {
     }
 
     private volatile StatusListener statusListener;
+    private volatile String gatewayHealthSession;
 
     public void setStatusListener(StatusListener listener) { statusListener = listener; }
 
+    void setGatewayHealthSession(String session) { gatewayHealthSession = session; }
+
     public WearTakBleClient(Context context, StatusListener statusListener) {
+        this(context, statusListener, PREFS, AutoReconnectPreference.NAME, false);
+    }
+
+    WearTakBleClient(Context context, StatusListener statusListener, String peerAddress) {
+        this(context, statusListener, GatewayPolicy.pairingPreferences(peerAddress),
+                GatewayPolicy.retryPreferences(peerAddress), true);
+    }
+
+    private WearTakBleClient(Context context, StatusListener statusListener,
+                             String pairingPreferences, String retryPreferences, boolean gatewayOnly) {
         this.baseContext = context;
         this.statusListener = statusListener;
+        this.pairingPreferences = pairingPreferences;
+        this.retryPreferences = retryPreferences;
+        this.gatewayOnly = gatewayOnly;
     }
 
     private void savePreferredAddress(String addr) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
         prefs.edit().putString(KEY_PREFERRED_ADDRESS, addr).apply();
     }
 
     private void clearPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
         prefs.edit().remove(KEY_PREFERRED_ADDRESS).apply();
     }
 
     public String getPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
         return prefs.getString(KEY_PREFERRED_ADDRESS, null);
     }
 
@@ -340,8 +370,9 @@ public class WearTakBleClient {
         registerBondReceiver();
         started = true;
         AutoReconnectPreference savedReconnect = reconnectPreference();
-        reconnect.start(savedReconnect.enabled(), automaticReconnectAllowed, savedReconnect.armedAddress());
-        logI("start(): initialized (automatic reconnect opt-in=" + savedReconnect.enabled() + ")");
+        reconnect.start(automaticReconnectAllowed, savedReconnect.armedAddress());
+        logI("start(): initialized (Traditional BLE automatic reconnect allowed="
+                + automaticReconnectAllowed + ")");
     }
 
     public synchronized void stop() {
@@ -356,6 +387,7 @@ public class WearTakBleClient {
         bluetoothAdapter = null;
         scanner = null;
         setConnected(false);
+        main.removeCallbacksAndMessages(null);
     }
 
     public synchronized void resetSession(String reason) {
@@ -363,7 +395,7 @@ public class WearTakBleClient {
         stopScanInternal("resetSession: " + reason);
         closeGattInternal("resetSession: " + reason);
 
-        synchronized (rxLock) { rxBuffer.setLength(0); }
+        synchronized (rxLock) { rxBuffer.clear(); }
         discovered.clear();
         pendingBondDevice = null;
         if (reason == null || !reason.startsWith("bond_recovery ")) {
@@ -750,6 +782,7 @@ public class WearTakBleClient {
     }
 
     private synchronized boolean scheduleBondRecoveryScan(DiscoveredDevice pending) {
+        if (gatewayOnly) return false;
         if (pending == null || pending.address == null) return false;
 
         String recoveryName = normalizeWearTakName(pending.name);
@@ -822,17 +855,7 @@ public class WearTakBleClient {
     }
 
     private AutoReconnectPreference reconnectPreference() {
-        return new AutoReconnectPreference(PluginPrefs.get(baseContext, AutoReconnectPreference.NAME));
-    }
-
-    public boolean isAutoReconnectEnabled() {
-        return reconnectPreference().enabled();
-    }
-
-    public synchronized void setAutoReconnectEnabled(boolean enabled) {
-        reconnectPreference().setEnabled(enabled);
-        if (!enabled && reconnect.isRetrying()) resetSession("automatic reconnect disabled");
-        reconnect.setEnabled(enabled);
+        return new AutoReconnectPreference(PluginPrefs.get(baseContext, retryPreferences));
     }
 
     public synchronized void setAutomaticReconnectAllowed(boolean allowed) {
@@ -850,6 +873,20 @@ public class WearTakBleClient {
 
     public synchronized boolean writeJsonLineToWatch(String jsonLine) {
         if (jsonLine == null) return false;
+        if (gatewayOnly && !GatewayPolicy.allowedOutput(jsonLine)) {
+            error("Gateway rejected phone-to-watch content/settings output");
+            return false;
+        }
+        if (gatewayOnly) {
+            try {
+                JSONObject output = new JSONObject(jsonLine);
+                if ("gateway_cot".equals(output.optString("msg_type")))
+                    GatewayCot.validate(output.getString("cot"));
+            } catch (org.json.JSONException | IllegalArgumentException e) {
+                error("Gateway map output rejected: " + e.getMessage());
+                return false;
+            }
+        }
         if (!started) start();
 
         if (bluetoothGatt == null || !connected) {
@@ -879,6 +916,10 @@ public class WearTakBleClient {
 
         int maxChunk = computeMaxChunk();
         synchronized (txLock) {
+            if (gatewayOnly && txQueue.size() + ((bytes.length + maxChunk - 1) / maxChunk) > 4096) {
+                error("Gateway BLE output queue full; retrying bounded handoff");
+                return false;
+            }
             // split into chunks
             int off = 0;
             while (off < bytes.length) {
@@ -903,6 +944,10 @@ public class WearTakBleClient {
 
     synchronized long getReadySession() {
         return connected && servicesReady && bluetoothGatt != null ? sessionGeneration : -1;
+    }
+
+    synchronized boolean gatewayTxIdle() {
+        synchronized (txLock) { return !txInFlight && txQueue.isEmpty(); }
     }
 
     synchronized boolean writeJsonLineToWatch(String jsonLine, long expectedSession) {
@@ -1199,17 +1244,14 @@ public class WearTakBleClient {
             if (!characteristic.getUuid().equals(txNotifyChar.getUuid())) return;
             if (data == null || data.length == 0) return;
 
-            String chunk = new String(data, StandardCharsets.UTF_8);
-
-            List<String> lines = new ArrayList<>();
+            List<String> lines;
             synchronized (rxLock) {
                 if (gatt != bluetoothGatt || receiveSession != sessionGeneration) return;
-                rxBuffer.append(chunk);
-                int idx;
-                while ((idx = rxBuffer.indexOf("\n")) >= 0) {
-                    String line = rxBuffer.substring(0, idx).trim();
-                    rxBuffer.delete(0, idx + 1);
-                    if (!line.isEmpty()) lines.add(line);
+                try {
+                    lines = rxBuffer.accept(data);
+                } catch (IllegalArgumentException e) {
+                    failSecureSession(e.getMessage(), "rx_frame_too_large");
+                    return;
                 }
             }
             for (String line : lines) {
@@ -1247,6 +1289,10 @@ public class WearTakBleClient {
             JSONObject env = new JSONObject(line);
             if ("watch_info".equals(env.optString("msgType"))
                     && env.optJSONObject("payload") != null) reconnect.onHealthResponse();
+            if (gatewayOnly && "gateway_ready".equals(env.optString("msgType"))
+                    && gatewayHealthSession != null
+                    && gatewayHealthSession.equals(env.optString("session")))
+                reconnect.onHealthResponse();
         } catch (org.json.JSONException ignored) {}
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
@@ -1273,12 +1319,12 @@ public class WearTakBleClient {
     // -------------------- pairing storage --------------------
 
     public String getPairedUid() {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
         return prefs.getString(KEY_PAIRED_UID, null);
     }
 
     private void savePairedUid(String uid, String callsign) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
         prefs.edit()
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)
@@ -1307,7 +1353,7 @@ public class WearTakBleClient {
         txNotifyChar = null;
         rxWriteChar = null;
 
-        synchronized (rxLock) { rxBuffer.setLength(0); }
+        synchronized (rxLock) { rxBuffer.clear(); }
         synchronized (txLock) { txQueue.clear(); txInFlight = false; }
 
         lastGattCloseMs = android.os.SystemClock.uptimeMillis();

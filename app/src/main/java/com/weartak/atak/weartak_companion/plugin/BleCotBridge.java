@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class BleCotBridge {
 
@@ -57,6 +58,7 @@ public class BleCotBridge {
     private volatile WearTakBleClient bleClient;
     private GarminConnectIqClient garminClient;
     private ChatManagerMapComponent chatManager;
+    private Consumer<Bundle> gatewayChatForwarder;
     private final ChatManagerMapComponent.ChatMessageListener chatMessageListener =
             this::forwardChatToWatch;
 
@@ -94,12 +96,37 @@ public class BleCotBridge {
     }
 
     public synchronized void stopChatForwarding() {
+        gatewayChatForwarder = null;
         if (chatManager != null) {
             chatManager.removeChatMessageListener(chatMessageListener);
             chatManager = null;
         }
         bleClient = null;
         garminClient = null;
+    }
+
+    synchronized void startGatewayChatForwarding(Consumer<Bundle> forwarder) {
+        gatewayChatForwarder = forwarder;
+        registerChatListener();
+    }
+
+    synchronized void stopGatewayChatForwarding() {
+        gatewayChatForwarder = null;
+        if (bleClient == null && garminClient == null && chatManager != null) {
+            chatManager.removeChatMessageListener(chatMessageListener);
+            chatManager = null;
+        }
+    }
+
+    void forwardGatewayCot(String xml) {
+        CotEvent event = GatewayCot.validate(xml);
+        if (internalCotDispatcher == null || externalCotDispatcher == null) {
+            throw new IllegalStateException("ATAK CoT dispatchers unavailable");
+        }
+        Bundle extras = new Bundle();
+        extras.putBoolean(PhoneMarkerMapRelay.WATCH_IMPORT, true);
+        internalCotDispatcher.dispatch(event, extras);
+        externalCotDispatcher.dispatch(event);
     }
 
     private synchronized void forwardChatToWatch(Bundle message) {
@@ -111,6 +138,15 @@ public class BleCotBridge {
 
         WearTakBleClient client = bleClient;
         GarminConnectIqClient garmin = garminClient;
+        Consumer<Bundle> gatewayForwarder = gatewayChatForwarder;
+        if (client == null && garmin == null && gatewayForwarder == null) return;
+        if (gatewayForwarder != null) {
+            try {
+                gatewayForwarder.accept(new Bundle(message));
+            } catch (RuntimeException e) {
+                Log.e(TAG, "Failed to relay ATAK chat to Gateway watches", e);
+            }
+        }
         if (client == null && garmin == null) return;
 
         try {

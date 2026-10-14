@@ -32,6 +32,52 @@ public class SystemBondedWatchConnectionTest {
                 SystemBondedWatchConnection.describeBondedWatch("ODIN-WEARTAK", "ODIN-WEARTAK", "8C:A3:EC:B6:DD:F5"));
     }
 
+    @Test public void conciseStatesDistinguishBondFromReadyConnection() {
+        assertEquals(SystemBondedWatchConnection.State.NOT_FOUND, controller.getState());
+        transport.known = transport.device;
+        controller.observe();
+        assertEquals(SystemBondedWatchConnection.State.FOUND, controller.getState());
+        controller.start();
+        transport.found();
+        assertEquals(SystemBondedWatchConnection.State.CONNECTING, controller.getState());
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        controller.onConnectionChanged(false);
+        assertEquals(SystemBondedWatchConnection.State.FOUND, controller.getState());
+    }
+
+    @Test public void pausePreservesBondAndBlocksRetriesUntilExplicitStart() {
+        transport.known = transport.device;
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onConnectionChanged(false);
+        Runnable staleRetry = scheduler.first();
+        controller.pause();
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertFalse(controller.isActive());
+        assertSame(transport.device, transport.known);
+        assertTrue(scheduler.pending.isEmpty());
+        staleRetry.run();
+        controller.onConnectionChanged(true);
+        controller.onError("late error");
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertEquals(1, transport.connects);
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        assertEquals(2, transport.connects);
+    }
+
+    @Test public void restoredPauseDoesNotStartDiscoveryOrConnection() {
+        controller.pause();
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertEquals(0, transport.finds);
+        assertEquals(0, transport.connects);
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
     @Test public void startsOnceAndWaitsForTransportReadiness() {
         assertEquals("Samsung Wearable connection stopped", controller.getStatus());
         controller.start();
