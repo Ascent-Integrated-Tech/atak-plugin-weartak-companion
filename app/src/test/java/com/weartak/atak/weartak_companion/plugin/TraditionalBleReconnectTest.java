@@ -6,17 +6,63 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class TraditionalBleReconnectTest {
+    @Test public void nineIndependentPeersUseSingleWatchRetrySemanticsAndCancelTogetherOnExit() {
+        Scheduler[] schedulers = new Scheduler[9];
+        Transport[] transports = new Transport[9];
+        TraditionalBleReconnect[] peers = new TraditionalBleReconnect[9];
+        Runnable[] stale = new Runnable[9];
+        for (int i = 0; i < 9; i++) {
+            schedulers[i] = new Scheduler();
+            transports[i] = new Transport();
+            peers[i] = new TraditionalBleReconnect(schedulers[i], transports[i]);
+            peers[i].start(true, "ready-bonded-" + i);
+            assertEquals(2000, schedulers[i].delay());
+            stale[i] = schedulers[i].first();
+        }
+        peers[0].disarm(); // Manual pause/removal belongs only to this admitted peer.
+        stale[0].run();
+        assertEquals(0, transports[0].connects);
+        assertTrue(schedulers[0].pending.isEmpty());
+        for (int i = 1; i < 9; i++) {
+            schedulers[i].fire();
+            assertEquals("ready-bonded-" + i, transports[i].address);
+            peers[i].onLoss();
+            assertEquals(60000, schedulers[i].delay());
+            stale[i] = schedulers[i].first();
+        }
+        for (int i = 0; i < 9; i++) {
+            peers[i].stop();
+            stale[i].run();
+            peers[i].resume();
+            assertTrue(schedulers[i].pending.isEmpty());
+            assertEquals(i == 0 ? 0 : 1, transports[i].connects);
+        }
+    }
+
+    @Test public void onePeersTrustLossDoesNotDisarmAnotherPeersHealthOrRetry() {
+        Scheduler secondScheduler = new Scheduler();
+        Transport secondTransport = new Transport();
+        TraditionalBleReconnect second = new TraditionalBleReconnect(secondScheduler, secondTransport);
+        ready();
+        second.start(true, "second-bonded-watch");
+        controller.disarm();
+        secondScheduler.fire();
+        assertEquals("second-bonded-watch", secondTransport.address);
+        second.onReady("second-bonded-watch");
+        assertEquals(30000, secondScheduler.delay());
+        assertTrue(scheduler.pending.isEmpty());
+    }
     private final Scheduler scheduler = new Scheduler();
     private final Transport transport = new Transport();
     private final TraditionalBleReconnect controller = new TraditionalBleReconnect(scheduler, transport);
 
     private void ready() {
-        controller.start(true, true);
+        controller.start(true);
         controller.onReady("bonded-watch");
     }
 
-    @Test public void defaultOffDoesNotProbeOrRetryEvenAfterReady() {
-        controller.start(false, true);
+    @Test public void otherModesDoNotProbeOrRetryEvenAfterReady() {
+        controller.start(false);
         controller.onReady("bonded-watch");
         controller.onLoss();
         controller.resume();
@@ -25,7 +71,7 @@ public class TraditionalBleReconnectTest {
     }
 
     @Test public void initialConnectionFailureCannotArmReconnect() {
-        controller.start(true, true);
+        controller.start(true);
         controller.onLoss();
         controller.resume();
         assertTrue(scheduler.pending.isEmpty());
@@ -97,15 +143,17 @@ public class TraditionalBleReconnectTest {
         assertEquals("another-watch", transport.address);
     }
 
-    @Test public void toggleOffCancelsAllTimersAndLateCallbacks() {
+    @Test public void revokingModeOwnershipCancelsAllTimersAndLateCallbacks() {
         ready();
         Runnable health = scheduler.first();
-        controller.setEnabled(false);
+        controller.setAllowed(false);
         health.run();
         controller.onLoss();
         assertTrue(scheduler.pending.isEmpty());
         assertEquals(0, transport.probes);
-        controller.setEnabled(true);
+        controller.start(true);
+        controller.onReady("bonded-watch");
+        controller.onLoss();
         assertEquals(2000, scheduler.delay());
     }
 
@@ -152,14 +200,13 @@ public class TraditionalBleReconnectTest {
         assertEquals(0, transport.resets);
         assertTrue(scheduler.pending.isEmpty());
 
-        controller.start(true, true, "bonded-watch");
+        controller.start(true, "bonded-watch");
         Runnable staleRetry = scheduler.first();
         controller.setAllowed(false);
         controller.stop();
-        controller.start(true, false, "bonded-watch"); // Samsung owner only.
+        controller.start(false, "bonded-watch"); // Samsung owner only.
         staleRetry.run();
         controller.onLoss();
-        controller.setEnabled(true); // Even a stale toggle callback cannot activate another mode.
         controller.resume();
         assertEquals(0, transport.connects);
         assertTrue(scheduler.pending.isEmpty());
@@ -171,7 +218,7 @@ public class TraditionalBleReconnectTest {
         Runnable old = scheduler.first();
         for (int i = 0; i < 3; i++) {
             controller.stop();
-            controller.start(true, true);
+            controller.start(true);
             old.run();
             controller.resume();
         }
@@ -179,17 +226,14 @@ public class TraditionalBleReconnectTest {
         assertEquals(0, transport.connects);
     }
 
-    @Test public void reloadCanResumeOnlyExplicitlyEnabledPreviouslyReadyPeer() {
-        controller.start(false, true, "previously-ready-peer");
+    @Test public void reloadAutomaticallyResumesPreviouslyReadyPeerOnlyInTraditionalMode() {
+        controller.start(false, "previously-ready-peer");
         assertTrue(scheduler.pending.isEmpty());
         controller.stop();
-        controller.start(true, false, "previously-ready-peer");
-        assertTrue(scheduler.pending.isEmpty());
-        controller.stop();
-        controller.start(true, true, "previously-ready-peer");
+        controller.start(true, "previously-ready-peer");
         Runnable stale = scheduler.first();
         controller.stop();
-        controller.start(true, true, "previously-ready-peer");
+        controller.start(true, "previously-ready-peer");
         stale.run();
         assertEquals(0, transport.connects);
         scheduler.fire();

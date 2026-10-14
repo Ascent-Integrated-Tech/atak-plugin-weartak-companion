@@ -6,6 +6,42 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class ConnectionModeControllerTest {
+    @Test public void gatewayFromEveryModeStopsOldOwnerLocksBleAndUnlocksOnExit() {
+        for (ConnectionModeController.Mode from : ConnectionModeController.Mode.values()) {
+            Route route = new Route();
+            route.owner = new ConnectionModeController(route);
+            route.owner.start(from);
+            long old = route.token;
+            route.events.clear();
+            route.owner.changePurpose(true);
+            assertEquals(java.util.Arrays.asList("stop", "traditional_ble"), route.events);
+            assertFalse(route.owner.isCurrent(old));
+            assertTrue(route.owner.isPairingLocked());
+            assertEquals(ConnectionModeController.Mode.TRADITIONAL, route.owner.getMode());
+            long gatewayToken = route.token;
+            route.events.clear();
+            route.owner.select(ConnectionModeController.Mode.SAMSUNG);
+            route.owner.select(ConnectionModeController.Mode.GARMIN);
+            assertTrue(route.events.isEmpty());
+            assertTrue(route.owner.isCurrent(gatewayToken));
+            route.owner.changePurpose(false);
+            assertFalse(route.owner.isPairingLocked());
+            assertFalse(route.owner.isCurrent(gatewayToken));
+            route.owner.select(from);
+            assertEquals(from, route.owner.getMode());
+        }
+    }
+
+    @Test public void savedGatewayPurposeForcesBleEvenWithNonBleSavedMode() {
+        Route route = new Route();
+        route.owner = new ConnectionModeController(route);
+        route.owner.start(ConnectionModeController.Mode.GARMIN, true);
+        assertTrue(route.owner.isPairingLocked());
+        assertEquals(ConnectionModeController.Mode.TRADITIONAL, route.owner.getMode());
+        route.owner.stop();
+        route.owner.start(ConnectionModeController.Mode.SAMSUNG);
+        assertEquals(ConnectionModeController.Mode.TRADITIONAL, route.owner.getMode());
+    }
     private static class Route implements ConnectionModeController.Transport {
         final List<String> events = new ArrayList<>();
         long token;

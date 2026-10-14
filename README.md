@@ -25,44 +25,155 @@ Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconn
 already had its own `SystemBondedWatchConnection` retries; selecting that mode
 is not a Traditional BLE automatic-reconnect toggle.
 
-This narrow change restores the original MR15 checkbox and copy:
-**Reconnect automatically** / **Try to reconnect when WearTAK closes, restarts,
-or disconnects unexpectedly**. It is visible only in Traditional BLE and defaults
-OFF. The choice persists in ATAK's host-owned preferences, not the plugin package
-data directory. The fresh `wtk_traditional_reconnect_v1` namespace intentionally
-does not import experimental MR15 or Samsung preferences: neither can silently
-enable the new toggle. No other preference storage is migrated.
+Traditional BLE now reconnects automatically as part of the selected mode; there
+is no user-toggle checkbox or reconnect explanation in the device pane.
+The last services-ready peer persists in ATAK's host-owned preferences using
+the existing `wtk_traditional_reconnect_v1` namespace. The removed opt-in value is
+ignored, including previously saved OFF values. Experimental MR15 and Samsung peer
+preferences are not imported. No other preference storage is migrated.
 
 After a bonded, services-ready connection in the current plugin run, unexpected
 loss starts a retry after 2 seconds; failed attempts retry after 60 seconds, with
 a bounded 30-second setup watchdog (normal BLE setup still times out at 25 seconds).
 Retries address only that same already-bonded peer, never scan by name to adopt a
 different watch or create/remove a system bond. A changed address or explicit unpair
-requires manual selection/pairing. The checkbox choice and previously ready peer
-survive plugin restart; an enabled Traditional BLE run can resume retries to that
+requires manual selection/pairing. The previously ready peer
+survives plugin restart; a Traditional BLE run can resume retries to that
 same peer, but data still requires a fresh bonded/services-ready session. Selecting
 a new peer clears the previous reconnect target until the new peer reaches readiness.
 Manual Disconnect and genuine trust loss disarm retries until another ready session.
 Bluetooth OFF pauses retries and ON resumes an eligible armed peer. User scans pause
 background retries; completion resumes them without racing a manual connection.
 
-While enabled and ready, a lightweight `request_watch_info` probe runs every
+While Traditional BLE is ready, a lightweight `request_watch_info` probe runs every
 30 seconds (no settings/P12 polling). Two missed 10-second responses or a failed
 probe reset the transport and begin retry. All timers are cancelled on stop,
-toggle-off, or mode ownership changes, and generation fences reject stale callbacks.
+manual Disconnect, or mode ownership changes, and generation fences reject stale callbacks.
 The existing session-qualified data writes and current chat/local deletion/alerts/
 Bloodhound/provisioning policies are unchanged. The status listener is rebound on
 each BLE mode start so a previous mode token cannot own a restarted connection.
 
-Samsung Wearable retains its existing retry owner; it never uses this toggle or
+Samsung Wearable retains its existing retry owner; it never uses Traditional BLE retries or the
 health loop. Garmin retains its separate Connect IQ lifecycle, with named groups
 blocked, `reliableDelivery:false`, and no external point deletion.
 
-The checkbox and explanatory copy are hidden outside Traditional BLE, and the
-checkbox is disabled there. Its click handler also checks the current mode.
+Reconnect never changes
+the selected connection mode or falls back to a different mode.
 Mode teardown explicitly revokes Traditional BLE reconnect ownership before
 stopping the transport; stopped/generation-fenced probe and retry callbacks cannot
-reconnect after switching to Samsung or Garmin.
+reconnect after switching to Samsung or Garmin. The three-choice connection-mode
+dialog uses ATAK's activity context so it has a valid host window token.
+
+The device pane places **Pairing Mode:** immediately below its title, with
+**BLE**, **Garmin Connect**, and **Samsung Wearable** choices. BLE places a compact Scan
+button to the right of its status, without scan/reconnect explanations.
+All modes use a single rounded status / action / settings-gear row. Status badges
+show **NOT CONNECTED** on yellow and **CONNECTED** on green; missing-app statuses
+remain red. Action buttons
+and gears have fixed widths and matching heights; the status fills the remaining
+space. The gear opens WearTAK watch settings and stays disabled until the route
+is ready (exactly one connected WearTAK watch for Garmin). BLE offers Scan when
+disconnected and Disconnect when ready. Garmin no longer displays the setup-requirements paragraph;
+its Connect IQ prerequisites described in GARMIN SETUP still apply.
+When Garmin Connect is missing (including SDK `GCM_NOT_INSTALLED`), its status bar
+shows **Garmin Connect Not Found** in red. Missing Samsung Wearable shows
+**NOT INSTALLED** in red. Both provide an **Install** action to
+open the official app's Play Store listing, with a web-listing fallback when the
+Play Store is unavailable. When Samsung Wearable is installed but no watch is found,
+**NOT CONNECTED** has an **Open** action to launch Samsung Wearable.
+Connect/Disconnect remains available for the watch route's other states;
+no bond is removed or pairing mode changed by Install or Open.
+For installed-state UI previews only, a debug build on a `ranchu`/`goldfish`
+emulator can treat Samsung Wearable as installed when the ATAK host's private
+`files/weartak-preview-samsung-installed` file exists. Enable with
+`adb -s emulator-5554 shell run-as com.atakmap.app.civ touch files/weartak-preview-samsung-installed`;
+disable with the same command using `rm` instead of `touch`, then reopen the pane.
+The marker survives restarts and APK updates, but has no effect in release builds
+or on physical phones. It does not simulate watch readiness or pairing.
+Open displays an explicit preview notice if the real companion app is absent.
+Garmin likewise offers **Open** to launch Garmin Connect when installed but no
+watch is connected; its connected-state Retry action is unchanged.
+The redundant no-paired-Garmin-watches helper text is hidden.
+**WearTAK Settings** prioritizes **Use WearTAK with this phone**: managed identity
+is read-only and uses the phone's callsign, team, and role. Profiles without a
+saved `phoneManagedSettings` value default to managed use; explicit watch values
+(including `false`) are preserved. Changes still use the existing watch snapshot,
+send, and acknowledgement flow. Reporting interval remains configurable.
+BLE and Samsung place server/P12 editing in a collapsed **Standalone Setup**
+section. Expanding it does not change the saved mode or send anything. Disable
+phone-managed use for independent provisioning, send the settings, and wait for
+the watch's save confirmation before disconnecting. Garmin hides standalone
+setup because its current profile protocol does not provision servers or P12.
+The title-row purpose selector offers **Bond Single Watch**, **Configure Single
+Watch**, and **Multiwatch Gateway**, in that order. Bond Single Watch keeps the
+existing phone-managed profile behavior and has no settings gear. Configure
+Single Watch exposes server/P12 editing; BLE places a ready-gated settings
+gear beside each watch's **Connect/Disconnect** action rather than a
+status-row gear. Samsung retains its ready-gated settings gear;
+purpose selection itself sends nothing. Configure suppresses automatic
+managed-profile sends and requires BLE or Samsung Wearable; switch away from
+Garmin before choosing it. The purpose is saved on the phone. Gateway never
+provisions a watch; single-watch profile changes keep their existing flows.
+Samsung Wearable shows a compact status and
+adjacent Connect/Disconnect action instead of discovery explanations. Statuses are
+**Not Found**, **Found** (known bond, not an active ATAK session), **Connecting**,
+**Connected** (transport ready), and **Paused**. Disconnect pauses ATAK's separate
+WearTAK route and cancels discovery/setup/retries; it does not remove the Android
+bond or disconnect Galaxy Wearable's own connection. The paused choice persists
+through plugin restart and mode changes until Connect is pressed. Settings remains
+available when connected. Detailed connection errors remain in ATAK logs.
+
+MULTIWATCH GATEWAY (NINE-WATCH BLE)
+
+Choose **Multiwatch Gateway** to scan for and manually connect up to **nine**
+WearTAK watches. The limit is a software admission cap, not a promise that every
+phone can maintain nine simultaneous GATT connections. Advertisements are
+deduplicated by BLE address; newly found watches are never auto-admitted. Only a
+previously services-ready bonded address can resume automatically. Connected,
+Gateway-ready watches stay at the top of the list in stable order. Disconnect
+cancels only that peer's GATT session and retries; Remove also forgets its
+Gateway admission. A bonded watch that lacks the Gateway v1 handshake shows an
+unsupported-watch error and is not used for routing.
+
+Gateway requires a WearOS WearTAK build containing the WEARTAK-154 Gateway v1
+session protocol and **Use WearTAK Companion** enabled on each watch. Older
+watch builds do not support Gateway negotiation; the companion-only TPP
+source ZIP does not include the required watch update.
+
+Gateway switches any prior BLE, Samsung, or Garmin route off before starting
+BLE. Pairing Mode is locked and dimmed at BLE while Gateway is selected. There
+is no Gateway settings gear or profile provisioning. The watch keeps only its
+existing **Use WearTAK Companion** on/off control; its UID, callsign, team,
+role, reporting interval, server list, certificates, and phone-management
+setting remain watch-owned and are not written by Gateway.
+
+Gateway v1 negotiates a fresh session for each ready BLE peer and carries only
+validated CoT up to 32 KiB. Supported traffic is ATAK map points accepted by
+the existing phone marker policy, `a-f-G-U-C`/`a-f-G-E` user positions and
+their subtypes, WearTAK emergency CoT (`b-a-o`, `b-a-o-*`, and `b-a-g`), and
+GeoChat (`b-t-f`) with explicit recipient metadata. Phone and watch identities
+are retained: each watch PLI uses that watch's own UID and current identity;
+other users' PLI and map points retain their original CoT. Unsupported CoT,
+profile/settings messages, Bloodhound commands, and watch-control payloads are
+not relayed.
+
+Direct/group chats are delivered only to listed recipient UIDs; **All Chat
+Rooms** is the explicit broadcast path. Alert and cancellation CoT is routed
+to the phone and connected Gateway peers. Watch-origin event IDs, chat
+message IDs, and per-peer recent revisions suppress echoes and duplicate
+delivery. The phone uses bounded per-peer coalescing queues and paced BLE
+handoff; full queues report backpressure instead of switching to an unsafe
+route. The watch validates the session, supported CoT type, chat recipient,
+and its own negotiated identity before importing positions, points, alerts,
+or chats. Session and duplicate ledgers are transient and clear on disconnect.
+
+Gateway pairing/retry preferences are separate from traditional single-watch
+preferences (`wtk_gateway_v1`, `wtk_gateway_retry_<address>`, and
+`wtk_gateway_pair_<address>`). Existing traditional reconnect policy still
+targets only the exact previously ready bonded peer. Switching purpose stops
+old transports, retries, listeners, and callbacks before the new route starts.
+No physical-watch acceptance or TAK-server delivery is claimed by JVM/build
+validation.
 
 An Android Bluetooth bond is stored pairing/trust, not an active WearTAK GATT
 session. Galaxy Wearable reconnecting its own watch connection does not establish
@@ -74,7 +185,7 @@ no new Garmin reconnect behavior, is added.
 Validation uses JVM scheduler/preferences seams plus the existing transport,
 session, chat, point/alert/settings, Bloodhound, and Garmin tests. These are not BLE
 hardware acceptance. Still verify watch app close/restart/out-of-range, Bluetooth
-OFF/ON, manual Disconnect, persisted OFF/ON, new peer selection/unpair, mode switches,
+OFF/ON, manual Disconnect across plugin restart, new peer selection/unpair, mode switches,
 and repeated plugin stop/start on paired hardware; ensure no old-session payloads
 arrive. SDK 36 and local ATAK 5.5.1.8 `main.jar` support offline Java/resource checks;
 the declared ATAK 5.8 target cannot be SDK-validated here because its SDK is not
@@ -199,13 +310,17 @@ operation is not a watch delivery acknowledgement.
 
 SETTINGS AND P12 PROVISIONING (WEARTAK-90)
 
-By default, connecting or refreshing only reads watch settings. Edit the watch
+This section applies to Bond Single Watch/Configure Single Watch, not Gateway.
+An independent watch profile can be provisioned with Configure Single Watch
+before using Gateway, or directly on the watch; Gateway itself never reads or
+writes its settings. Edit the watch
 callsign and server settings, choose the server's P12 file/password if needed,
 then tap Send to Watch. Wait for the successful save acknowledgement before
 disconnecting. Uploaded credentials stay on the watch and watch settings remain
 editable; one-time provisioning does not replace its team or role.
 
-Manage watch settings from this phone is an explicit opt-in. It copies phone
+Use WearTAK with this phone defaults to managed use for profiles without a saved
+flag; explicit saved watch values are preserved. Managed use copies phone
 identity, syncs on reconnect, and keeps managed watch settings locked even while
 temporarily disconnected. Uncheck it and send again to release management while
 retaining saved certificates and current reporting settings. Unpairing also

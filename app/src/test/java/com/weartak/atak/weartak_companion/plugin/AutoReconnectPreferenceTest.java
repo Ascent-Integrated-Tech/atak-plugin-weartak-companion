@@ -17,42 +17,41 @@ public class AutoReconnectPreferenceTest {
         return new AutoReconnectPreference(PluginPrefs.get(plugin, host, AutoReconnectPreference.NAME));
     }
 
-    @Test public void defaultOffAndExplicitChoiceSurviveReload() {
-        assertFalse(load().enabled());
-        load().setEnabled(true);
-        assertTrue(load().enabled());
-        load().setEnabled(false);
-        assertFalse(load().enabled());
+    @Test public void noReconnectTargetUntilPeerReachesReadiness() {
+        assertNull(load().armedAddress());
+        load().arm("bonded-watch");
+        assertEquals("bonded-watch", load().armedAddress());
     }
 
     @Test public void usesHostDataDirectoryNotPluginPackage() {
-        load().setEnabled(true);
+        load().arm("bonded-watch");
         assertTrue(host.files.containsKey(AutoReconnectPreference.NAME));
         assertTrue(plugin.files.isEmpty());
     }
 
-    @Test public void experimentalAndSamsungOptInsAreNotMigrated() {
+    @Test public void experimentalAndSamsungPeersAreNotMigrated() {
         host.getSharedPreferences("wtk_pairing", 0).edit()
-                .putBoolean("auto_reconnect_enabled", true).apply();
+                .putString("preferred_address", "experimental-watch").apply();
         plugin.getSharedPreferences(AutoReconnectPreference.NAME, 0).edit()
-                .putBoolean("auto_reconnect_enabled", true).apply();
+                .putString("ready_peer_address", "plugin-watch").apply();
         host.getSharedPreferences("weartak_plugin", 0).edit()
                 .putBoolean("system_bonded_enabled", true).apply();
-        assertFalse(load().enabled());
+        assertNull(load().armedAddress());
     }
 
     @Test public void fallbackContextUsesItsApplicationDataDirectory() {
         SharedPreferences p = PluginPrefs.get(plugin, null, AutoReconnectPreference.NAME);
-        new AutoReconnectPreference(p).setEnabled(true);
-        assertTrue(new AutoReconnectPreference(
-                PluginPrefs.get(plugin, null, AutoReconnectPreference.NAME)).enabled());
+        new AutoReconnectPreference(p).arm("bonded-watch");
+        assertEquals("bonded-watch", new AutoReconnectPreference(
+                PluginPrefs.get(plugin, null, AutoReconnectPreference.NAME)).armedAddress());
     }
 
     @Test public void readyPeerSurvivesReloadAndManualDisconnectDisarmsIt() {
         assertNull(load().armedAddress());
         load().arm("bonded-watch");
         assertEquals("bonded-watch", load().armedAddress());
-        load().setEnabled(false);
+        host.getSharedPreferences(AutoReconnectPreference.NAME, 0).edit()
+                .putBoolean("auto_reconnect_enabled", false).apply();
         assertEquals("bonded-watch", load().armedAddress());
         load().disarm();
         assertNull(load().armedAddress());

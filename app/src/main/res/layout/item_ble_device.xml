@@ -79,6 +79,17 @@
             android:layout_width="110dp"
             android:layout_height="40dp"
             android:text="Connect" />
+        <ImageButton
+            android:id="@+id/watchSettingsButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_gray"
+            android:src="@drawable/ic_watch_settings"
+            android:padding="8dp"
+            android:contentDescription="WearTAK watch settings"
+            android:enabled="false"
+            android:visibility="gone" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
