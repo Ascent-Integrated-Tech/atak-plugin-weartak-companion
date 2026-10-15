@@ -139,16 +139,37 @@ final class WearTakDownstreamBridge implements
     public void chatMessageReceived(Bundle message) {
         if (message == null) return;
         String messageUid = firstNonBlank(message.getString("uid"), message.getString("messageId"));
-        if (WatchOriginRegistry.consumeChat(messageUid)) return;
+        String messageId = message.getString("messageId", "");
+        if (WatchOriginRegistry.isChat(messageUid) || WatchOriginRegistry.isChat(messageId)) {
+            Log.d(TAG, "Suppressing watch-originated chat callback uid=" + messageUid
+                    + " messageId=" + messageId);
+            return;
+        }
         JSONObject payload = new JSONObject();
         put(payload, "uid", messageUid);
         put(payload, "senderUid", message.getString("senderUid", ""));
+        String originDeviceUid = WatchOriginRegistry.chatOrigin(messageUid);
+        if (originDeviceUid.isEmpty()) originDeviceUid = WatchOriginRegistry.chatOrigin(messageId);
+        if (originDeviceUid.isEmpty()) {
+            originDeviceUid = firstNonBlank(message.getString("senderUid"), messageUid);
+        }
+        put(payload, "originDeviceUid", originDeviceUid);
+        put(payload, "relayDeviceUid", phoneUid());
         put(payload, "senderCallsign", message.getString("senderCallsign", ""));
         put(payload, "roomUid", message.getString("conversationId", "All Chat Rooms"));
         put(payload, "roomTitle", message.getString("conversationName", "All Chat Rooms"));
         put(payload, "message", message.getString("message", ""));
         put(payload, "sentTime", message.getLong("sentTime", System.currentTimeMillis()));
         sendEnvelope(MSG_CHAT, payload, messageUid);
+    }
+
+    private String phoneUid() {
+        try {
+            return mapView != null && mapView.getSelfMarker() != null
+                    ? mapView.getSelfMarker().getUID() : "";
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     @Override
@@ -272,6 +293,8 @@ final class WearTakDownstreamBridge implements
         put(envelope, "msgUid", safeIdentity.isEmpty() ? type + ":" + System.nanoTime() : safeIdentity);
         put(envelope, "t", System.currentTimeMillis());
         put(envelope, "src", "atak");
+        put(envelope, "originDeviceUid", payload.optString("originDeviceUid", phoneUid()));
+        put(envelope, "relayDeviceUid", phoneUid());
         put(envelope, "payload", payload);
         if (sender.send(envelope.toString())) {
             synchronized (lastSentPayloads) {

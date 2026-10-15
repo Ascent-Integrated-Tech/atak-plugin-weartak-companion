@@ -312,7 +312,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
 
-        if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
+        if (bleCotBridge == null) bleCotBridge = new BleCotBridge(
+                bleClient == null ? null : bleClient.getPairedUid());
         SharedPreferences prefs = systemBondedPreferences();
         String saved = prefs.getString("connection_mode", null);
         if (saved == null) {
@@ -338,6 +339,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                 : systemBondedConnection != null && systemBondedConnection.isActive()
                                 ? systemBondedConnection.getStatus() : "DISCONNECTED");
                     }
+                    if (!connected) WatchOriginRegistry.clearAll();
 
                     if (connected) {
                         // Persist preferred device for future sessions
@@ -377,7 +379,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         if (bleCotBridge == null) {
-            bleCotBridge = new BleCotBridge();
+            bleCotBridge = new BleCotBridge(bleClient.getPairedUid());
             Log.i(TAG, "BleCotBridge initialized in plugin");
         }
 
@@ -392,7 +394,26 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!bleClient.isConnected()) return;
+
+                    // Manual connections populate selectedDevice before GATT connect.
+                    // Auto-reconnect reaches READY without that UI-side assignment, so
+                    // adopt the client-owned active device before refreshing the card.
+                    WearTakBleClient.DiscoveredDevice activeDevice = bleClient.getActiveDevice();
+                    if (activeDevice != null) {
+                        selectedDevice = activeDevice;
+                        currentConnectedAddress = activeDevice.address;
+                        savePreferredDevice(activeDevice.address, activeDevice.name);
+                        if (deviceAdapter != null) {
+                            deviceAdapter.setConnected(activeDevice.address);
+                        }
+                        showConnectedCard(activeDevice);
+                    }
+
                     if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
+                    if (bleCotBridge != null) {
+                        bleCotBridge.setWatchUid(bleClient.getPairedUid());
+                    }
+                    sendPhoneInfoToWatch();
                     requestSettingsFromWatch("onReady");
                     ensureDownstreamBridge();
                     if (downstreamBridge != null) downstreamBridge.sendInitialMarkerSnapshot();
@@ -468,7 +489,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
 
-            @Override public void onPaired(String deviceId, String callsign) { }
+            @Override public void onPaired(String deviceId, String callsign) {
+                if (bleCotBridge != null) bleCotBridge.setWatchUid(deviceId);
+            }
 
             @Override
             public void onTrustLost(String deviceAddress, String reason) {
@@ -634,7 +657,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         ConnectionModeController.Mode[] modes = ConnectionModeController.Mode.values();
         String[] labels = new String[modes.length];
         for (int i = 0; i < modes.length; ++i) labels[i] = modes[i].label;
-        new AlertDialog.Builder(pluginContext).setTitle("Connection mode")
+        MapView currentMapView = MapView.getMapView();
+        Context dialogContext = currentMapView == null ? null : currentMapView.getContext();
+        if (dialogContext == null) {
+            Log.w(TAG, "Cannot show connection mode chooser without an active MapView context");
+            return;
+        }
+        new AlertDialog.Builder(dialogContext).setTitle("Connection mode")
                 .setSingleChoiceItems(labels, connectionModes.getMode().ordinal(), (dialog, which) -> {
                     selectConnectionMode(modes[which]);
                     dialog.dismiss();
@@ -673,6 +702,32 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (!downstreamBridge.start()) downstreamBridge = null;
     }
 
+    private void sendPhoneInfoToWatch() {
+        if (bleClient == null) return;
+        try {
+            MapView currentMapView = MapView.getMapView();
+            String uid = currentMapView == null || currentMapView.getSelfMarker() == null
+                    ? "ANDROID-UNKNOWN" : currentMapView.getSelfMarker().getUID();
+            String callsign = currentMapView == null ? "ANDROID-UNKNOWN"
+                    : currentMapView.getDeviceCallsign();
+            JSONObject payload = new JSONObject();
+            payload.put("uid", uid);
+            payload.put("cs", callsign == null ? "ANDROID-UNKNOWN" : callsign);
+            JSONObject envelope = new JSONObject();
+            envelope.put("vers", 1);
+            envelope.put("msgType", "phone_info");
+            envelope.put("msgUid", java.util.UUID.randomUUID().toString());
+            envelope.put("t", System.currentTimeMillis());
+            envelope.put("src", "atak");
+            envelope.put("payload", payload);
+            if (!bleClient.writeJsonLineToWatch(envelope.toString())) {
+                Log.w(TAG, "Unable to send phone identity to watch");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to build phone identity envelope", t);
+        }
+    }
+
     @Override
     public void onStop() {
         runOnMain(() -> {
@@ -681,6 +736,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 downstreamBridge.stop();
                 downstreamBridge = null;
             }
+            WatchOriginRegistry.clearAll();
             bleCotBridge = null;
         });
     }

@@ -32,20 +32,29 @@ import java.util.UUID;
 public class BleCotBridge {
 
     private static final String TAG = "WTK/BleCotBridge";
-
     private final CotDispatcher externalCotDispatcher;
     private final CotDispatcher internalCotDispatcher;
 
     private MapView mapView;
     private String myUid;
     private String pluginCallsign;
+    private volatile String watchUid;
 
     public BleCotBridge() {
+        this(null);
+    }
+
+    public BleCotBridge(String watchUid) {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
         internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
+        this.watchUid = watchUid;
         mapView = getMapView();
         refreshIdentity();
         Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
+    }
+
+    public void setWatchUid(String watchUid) {
+        this.watchUid = watchUid;
     }
 
     private void refreshIdentity() {
@@ -510,7 +519,7 @@ public class BleCotBridge {
             // Message id (used as messageId and last segment of GeoChat UID)
             String msgUid = optString(p, "uid",
                     optString(env, "msg_id", UUID.randomUUID().toString()));
-            WatchOriginRegistry.markChat(msgUid);
+            WatchOriginRegistry.markChat(msgUid, watchUid);
 
             // Destination identity
             // In your watch schema: roomUid = chat room id, roomTitle = display title
@@ -522,16 +531,19 @@ public class BleCotBridge {
             //   dstUid      = roomUid
             //   dstChatroom = roomTitle
             //
-            String dstUid      = optString(p, "roomUid", "All Chat Rooms");
-            String dstChatroom = optString(p, "roomTitle", dstUid);
+            String dstUid      = optString(p, "rmUid",
+                    optString(p, "roomUid", "All Chat Rooms"));
+            String dstChatroom = optString(p, "rmTitle",
+                    optString(p, "roomTitle", dstUid));
 
             // Message text
             String chatMsg = optString(p, "msg", "");
 
-            // Sender callsign comes from payload.cs in your earlier watch examples
-            // (Your stub used "cs", not "callsign".)
-            String senderCallsign = optString(p, "cs",
-                    optString(p, "callsign", pluginCallsign));
+            // The phone is the network sender in companion mode. Keep the
+            // watch callsign only as immutable origin metadata.
+            String originCallsign = optString(p, "cs",
+                    optString(p, "callsign", ""));
+            String senderCallsign = pluginCallsign;
 
             // Time/stale fields match your watch schema
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
@@ -559,7 +571,7 @@ public class BleCotBridge {
             // GeoChat.<senderUid>.<dstUid>.<msgId>
             // -------------------------------
             String eventUid = "GeoChat." + selfUid + "." + dstUid + "." + msgUid;
-            WatchOriginRegistry.markChat(eventUid);
+            WatchOriginRegistry.markChat(eventUid, watchUid);
 
             // -------------------------------
             // Point: match WearOS style (0/0 + huge errors)
@@ -572,6 +584,18 @@ public class BleCotBridge {
             // -------------------------------
             StringBuilder detail = new StringBuilder();
             detail.append("<detail>");
+
+            if (watchUid != null && !watchUid.trim().isEmpty()) {
+                detail.append("<weartak originDeviceUid='")
+                        .append(escapeXml(watchUid))
+                        .append("' originMsgUid='")
+                        .append(escapeXml(msgUid))
+                        .append("' originCallsign='")
+                        .append(escapeXml(originCallsign))
+                        .append("' relayDeviceUid='")
+                        .append(escapeXml(selfUid))
+                        .append("'/>");
+            }
 
             // (Optional) keep these if you want, but WearOS chat example doesn't include them.
             // Leave them out to match sample more closely.
@@ -639,19 +663,18 @@ public class BleCotBridge {
 
             CotEvent chatEvent = CotEvent.parse(xml);
 
-            // Local verification: this should populate ATAK chat UI locally
             try {
                 ChatMessageParser parser = new ChatMessageParser(mapView);
                 parser.parseCotEvent(chatEvent);
-                Log.d(TAG, "ChatMessageParser: parsed OK");
+                Log.d(TAG, "CHAT PATH LOCAL_PARSE completed; eventUid=" + chatEvent.getUID());
             } catch (Throwable t) {
-                Log.w(TAG, "ChatMessageParser parse failed (still attempting send)", t);
+                Log.w(TAG, "ChatMessageParser parse failed; chat was not distributed", t);
             }
 
-            // Network send (broadcast). Note: this can still be intercepted by other plugins.
             if (externalCotDispatcher != null) {
                 externalCotDispatcher.dispatchToBroadcast(chatEvent);
-                Log.d(TAG, "CHAT SENT (broadcast)");
+                Log.d(TAG, "CHAT PATH EXTERNAL_BROADCAST dispatched; eventUid="
+                        + chatEvent.getUID());
             } else {
                 Log.w(TAG, "externalCotDispatcher is null, not sending");
             }

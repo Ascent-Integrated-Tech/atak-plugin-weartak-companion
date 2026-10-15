@@ -17,8 +17,10 @@ public class WatchOriginRegistryTest {
     @Test
     public void chatOriginIsConsumedOnce() {
         WatchOriginRegistry.markChat("garmin-chat");
-        assertTrue(WatchOriginRegistry.consumeChat("garmin-chat"));
-        assertFalse(WatchOriginRegistry.consumeChat("garmin-chat"));
+        assertTrue(WatchOriginRegistry.isChat("garmin-chat"));
+        assertTrue(WatchOriginRegistry.isChat("garmin-chat"));
+        WatchOriginRegistry.clearChat("garmin-chat");
+        assertFalse(WatchOriginRegistry.isChat("garmin-chat"));
     }
 
     @Test
