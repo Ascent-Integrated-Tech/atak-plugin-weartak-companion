@@ -680,8 +680,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     });
         }
         if (systemBondedEnabled) {
-            if (!isCompanionAppInstalled(SAMSUNG_WEARABLE_PACKAGE)
-                    || systemBondedPreferences().getBoolean(KEY_WEARABLE_PAUSED, false)) {
+            if (systemBondedPreferences().getBoolean(KEY_WEARABLE_PAUSED, false)) {
                 systemBondedConnection.pause();
             } else {
                 systemBondedConnection.start();
@@ -858,20 +857,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void updateSystemBondedControl() {
         if (systemBondedWatchStatus == null || systemBondedConnection == null) return;
-        boolean missing = !isCompanionAppInstalled(SAMSUNG_WEARABLE_PACKAGE);
         SystemBondedWatchConnection.State state = systemBondedConnection.getState();
         boolean noWatch = state == SystemBondedWatchConnection.State.NOT_FOUND;
         boolean connected = state == SystemBondedWatchConnection.State.CONNECTED
                 && bleClient != null && bleClient.isConnected();
-        systemBondedWatchStatus.setText(missing ? "NOT INSTALLED"
-                : connected ? "CONNECTED" : noWatch ? "NOT CONNECTED"
+        systemBondedWatchStatus.setText(connected ? "CONNECTED" : noWatch ? "NOT CONNECTED"
                 : "Samsung Wearable " + state.label);
         styleConnectionStatus(systemBondedWatchStatus);
-        systemBondedConnectButton.setText(missing ? "Install"
-                : noWatch ? "Open"
+        systemBondedConnectButton.setText(noWatch ? "Open"
                 : systemBondedConnection.isActive() ? "Disconnect" : "Connect");
         systemBondedSettingsButton.setEnabled(
-                setupPurpose && !missing && systemBondedConnection.getState() == SystemBondedWatchConnection.State.CONNECTED
+                setupPurpose && systemBondedConnection.getState() == SystemBondedWatchConnection.State.CONNECTED
                         && bleClient != null && bleClient.isConnected());
         systemBondedSettingsButton.setAlpha(systemBondedSettingsButton.isEnabled() ? 1f : 0.4f);
     }
@@ -895,10 +891,6 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void toggleWearableConnection() {
         if (connectionModes.getMode() != ConnectionModeController.Mode.SAMSUNG
                 || systemBondedConnection == null) return;
-        if (!isCompanionAppInstalled(SAMSUNG_WEARABLE_PACKAGE)) {
-            openCompanionAppListing(SAMSUNG_WEARABLE_PACKAGE);
-            return;
-        }
         if (systemBondedConnection.getState() == SystemBondedWatchConnection.State.NOT_FOUND) {
             openCompanionApp(SAMSUNG_WEARABLE_PACKAGE, "Samsung Wearable");
             return;
@@ -924,15 +916,28 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         Toast.LENGTH_LONG).show();
                 return;
             }
-            Log.e(TAG, appName + " has no available launch activity");
-            Toast.makeText(host, "Unable to open " + appName + ".", Toast.LENGTH_LONG).show();
-            return;
+            if (SAMSUNG_WEARABLE_PACKAGE.equals(packageName)) {
+                // An explicit activity can launch even when ATAK cannot query the package.
+                launch = new Intent(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setClassName(packageName,
+                                packageName + ".setupwizard.SetupWizardWelcomeActivity")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            } else {
+                Log.w(TAG, appName + " has no available launch activity");
+                Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
+                        Toast.LENGTH_LONG).show();
+                openCompanionAppListing(packageName);
+                return;
+            }
         }
         try {
             host.startActivity(launch);
-        } catch (ActivityNotFoundException e) {
+        } catch (ActivityNotFoundException | SecurityException e) {
             Log.e(TAG, "Unable to launch " + appName, e);
-            Toast.makeText(host, "Unable to open " + appName + ".", Toast.LENGTH_LONG).show();
+            Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
+                    Toast.LENGTH_LONG).show();
+            openCompanionAppListing(packageName);
         }
     }
 
@@ -1106,10 +1111,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             garminToggleButton.setText(connectMobileMissing ? "Install" : connected ? "Retry" : "Open");
         }
         if (garminConnectionStatusTV != null) {
-            boolean noPairedWatches = garminClient != null
-                    && garminClient.getStatus().startsWith("No Garmin watches paired");
-            garminConnectionStatusTV.setVisibility(
-                    connectMobileMissing || noPairedWatches ? View.GONE : View.VISIBLE);
+            garminConnectionStatusTV.setVisibility(View.GONE);
         }
     }
 
