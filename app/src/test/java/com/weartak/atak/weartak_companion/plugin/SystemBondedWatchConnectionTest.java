@@ -205,6 +205,61 @@ public class SystemBondedWatchConnectionTest {
         assertTrue(scheduler.pending.isEmpty());
     }
 
+    @Test public void radioOffStopsRetriesAndRadioOnImmediatelyReconnects() {
+        transport.known = transport.device;
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onBluetoothStateChanged(false);
+        assertEquals(SystemBondedWatchConnection.State.BLUETOOTH_OFF, controller.getState());
+        assertTrue(status.contains("Bluetooth disabled"));
+        assertTrue(scheduler.pending.isEmpty());
+        controller.onBluetoothStateChanged(true);
+        assertEquals(2, transport.finds);
+        transport.found();
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+    }
+
+    @Test public void radioOffDuringBackoffCancelsStaleRetryAndDiscovery() {
+        controller.start();
+        WearTakBleClient.BondedCompanionListener stale = transport.listener;
+        stale.onUnavailable("GATT unavailable");
+        Runnable oldRetry = scheduler.first();
+        controller.onBluetoothStateChanged(false);
+        oldRetry.run();
+        stale.onFound(transport.device);
+        assertEquals(1, transport.finds);
+        assertEquals(0, transport.connects);
+        assertTrue(scheduler.pending.isEmpty());
+        controller.onBluetoothStateChanged(true);
+        assertEquals(2, transport.finds);
+    }
+
+    @Test public void radioOnDoesNotOverrideManualPause() {
+        controller.start();
+        controller.pause();
+        controller.onBluetoothStateChanged(false);
+        controller.onBluetoothStateChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertFalse(controller.isActive());
+        assertEquals(1, transport.finds);
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void repeatedRadioBroadcastDoesNotResetReadyConnection() {
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onBluetoothStateChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        assertEquals(0, transport.resets);
+        controller.onBluetoothStateChanged(false);
+        controller.onBluetoothStateChanged(false);
+        assertEquals(1, transport.resets);
+        assertEquals(SystemBondedWatchConnection.State.BLUETOOTH_OFF, controller.getState());
+    }
+
     @Test public void queuedDiscoveryCallbackCannotReenableStoppedController() {
         scheduler.queueExecution = true;
         controller.start();
