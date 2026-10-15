@@ -175,6 +175,7 @@ public class WearTakBleClient {
         void onPaired(String deviceId, String callsign);
         void onError(String msg);
         void onTrustLost(String deviceAddress, String reason);
+        default void onBluetoothStateChanged(boolean available) { }
     }
 
     private final AtomicReference<JsonListener> jsonListener = new AtomicReference<>(null);
@@ -756,7 +757,7 @@ public class WearTakBleClient {
         };
         main.postDelayed(setupTimeout, 25000);
         try {
-            bluetoothGatt = d.connectGatt(appContext, false, gattCallback);
+            bluetoothGatt = d.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             if (bluetoothGatt == null) failSecureSession("connectGatt returned null", "connect_failed");
         } catch (SecurityException | IllegalArgumentException e) {
             failSecureSession("BLE connection failed: " + e.getMessage(), "connect_failed");
@@ -1032,8 +1033,12 @@ public class WearTakBleClient {
                     reconnect.pause();
                     resetSession("bluetooth_off");
                     error("Bluetooth disabled");
+                    JsonListener listener = jsonListener.get();
+                    if (listener != null) listener.onBluetoothStateChanged(false);
                 } else if (state == BluetoothAdapter.STATE_ON) {
                     reconnect.resume();
+                    JsonListener listener = jsonListener.get();
+                    if (listener != null) listener.onBluetoothStateChanged(true);
                 }
                 return;
             }
@@ -1285,6 +1290,20 @@ public class WearTakBleClient {
     };
 
     private void handleJsonLine(String line) {
+        final long token = sessionGeneration;
+        final JsonListener listener = jsonListener.get();
+        // GATT callbacks hold the client monitor. Never invoke application code under it.
+        if (!main.post(() -> {
+            synchronized (WearTakBleClient.this) {
+                if (!started || token != sessionGeneration || listener != jsonListener.get()) return;
+            }
+            deliverJsonLine(line, token);
+        })) {
+            logW("Could not schedule received watch message");
+        }
+    }
+
+    private void deliverJsonLine(String line, long receiveSession) {
         try {
             JSONObject env = new JSONObject(line);
             if ("watch_info".equals(env.optString("msgType"))
@@ -1296,6 +1315,7 @@ public class WearTakBleClient {
         } catch (org.json.JSONException ignored) {}
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
+        if (!started || receiveSession != sessionGeneration) return;
 
         // existing pairing support
         try {

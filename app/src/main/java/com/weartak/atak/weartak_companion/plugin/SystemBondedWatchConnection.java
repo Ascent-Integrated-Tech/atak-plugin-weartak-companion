@@ -7,7 +7,7 @@ package com.weartak.atak.weartak_companion.plugin;
 public final class SystemBondedWatchConnection {
     public enum State {
         NOT_FOUND("Not Found"), FOUND("Found"), CONNECTING("Connecting"),
-        CONNECTED("Connected"), PAUSED("Paused");
+        CONNECTED("Connected"), PAUSED("Paused"), BLUETOOTH_OFF("Bluetooth Off");
 
         public final String label;
         State(String label) { this.label = label; }
@@ -41,6 +41,7 @@ public final class SystemBondedWatchConnection {
     private boolean connecting;
     private boolean ready;
     private boolean paused;
+    private boolean bluetoothAvailable = true;
     private long generation;
     private long retryDelay = 2000;
     private Runnable retry;
@@ -130,10 +131,29 @@ public final class SystemBondedWatchConnection {
         });
     }
 
+    public void onBluetoothStateChanged(boolean available) {
+        scheduler.execute(() -> {
+            if (bluetoothAvailable == available) return;
+            bluetoothAvailable = available;
+            if (!running) return;
+            ++generation;
+            cancelTimers();
+            attempting = connecting = ready = false;
+            transport.reset();
+            if (!available) {
+                updateStatus("Samsung Wearable: Bluetooth disabled");
+            } else {
+                retryDelay = 2000;
+                attempt();
+            }
+        });
+    }
+
     public String getStatus() { return status; }
     public boolean isActive() { return active; }
     public State getState() {
         if (paused) return State.PAUSED;
+        if (!bluetoothAvailable) return State.BLUETOOTH_OFF;
         if (ready) return State.CONNECTED;
         if (connecting) return State.CONNECTING;
         return candidate != null ? State.FOUND : State.NOT_FOUND;
@@ -141,7 +161,7 @@ public final class SystemBondedWatchConnection {
     public WearTakBleClient.DiscoveredDevice getCandidate() { return candidate; }
 
     private void attempt() {
-        if (!running) return;
+        if (!running || !bluetoothAvailable) return;
         retry = null;
         final long token = ++generation;
         attempting = true;

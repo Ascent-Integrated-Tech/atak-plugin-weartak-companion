@@ -95,6 +95,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private View serverSettingsGroup;
     private Button standaloneSetupButton;
     private final SettingsSessionGuard settingsSession = new SettingsSessionGuard();
+    private final SimulatorDiagnostics simulatorDiagnostics = new SimulatorDiagnostics();
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
@@ -413,6 +414,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (gatewayPurpose) mode = ConnectionModeController.Mode.TRADITIONAL;
         persistConnectionMode(mode);
         connectionModes.start(mode, gatewayPurpose);
+        simulatorDiagnostics.start(MapView.getMapView(), bleCotBridge);
     }
 
     private void initializeBleTransport(final long token) {
@@ -430,6 +432,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bleClient.setStatusListener(connected -> {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
+                    if (!connected && bleCotBridge != null) bleCotBridge.discardPendingCot();
                     if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
                     BloodhoundBridge bridge = bloodhoundBridge;
                     if (!connected && bridge != null) bridge.disconnected();
@@ -491,6 +494,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bleClient.start();
 
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
+            @Override
+            public void onBluetoothStateChanged(boolean available) {
+                runOnMain(() -> {
+                    if (!connectionModes.isCurrent(token)) return;
+                    if (systemBondedConnection != null) {
+                        systemBondedConnection.onBluetoothStateChanged(available);
+                    }
+                    updateSystemBondedControl();
+                });
+            }
+
             @Override
             public void onReady() {
                 Log.i(TAG, "BLE READY");
@@ -861,8 +875,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         boolean noWatch = state == SystemBondedWatchConnection.State.NOT_FOUND;
         boolean connected = state == SystemBondedWatchConnection.State.CONNECTED
                 && bleClient != null && bleClient.isConnected();
-        systemBondedWatchStatus.setText(connected ? "CONNECTED" : noWatch ? "NOT CONNECTED"
-                : "Samsung Wearable " + state.label);
+        systemBondedWatchStatus.setText(connected ? "CONNECTED"
+                : state == SystemBondedWatchConnection.State.BLUETOOTH_OFF ? "BLUETOOTH OFF"
+                : state == SystemBondedWatchConnection.State.CONNECTING ? "CONNECTING" : "NOT CONNECTED");
         styleConnectionStatus(systemBondedWatchStatus);
         systemBondedConnectButton.setText(noWatch ? "Open"
                 : systemBondedConnection.isActive() ? "Disconnect" : "Connect");
@@ -880,7 +895,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     static void styleConnectionStatus(TextView status) {
         String text = status.getText().toString();
-        boolean notConnected = "NOT CONNECTED".equals(text);
+        boolean notConnected = "NOT CONNECTED".equals(text) || "BLUETOOTH OFF".equals(text);
         status.setBackgroundResource(notConnected ? R.drawable.bg_chip_not_connected
                 : "CONNECTED".equals(text) ? R.drawable.bg_chip_success
                 : "NOT INSTALLED".equals(text) || "Garmin Connect Not Found".equals(text)
@@ -986,6 +1001,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     @Override
     public void onStop() {
         runOnMain(() -> {
+            simulatorDiagnostics.stop();
             connectionModes.stop();
         });
     }

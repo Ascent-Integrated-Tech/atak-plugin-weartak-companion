@@ -86,6 +86,40 @@ If the launcher lookup is unavailable, Open tries Galaxy Wearable's explicit
 launcher activity; if launching fails, it reports the failure and opens the store listing.
 Connect/Disconnect remains available for the watch route's other states;
 no bond is removed or pairing mode changed by Install or Open.
+Samsung's badge reports **CONNECTED** only after the data transport is ready,
+**CONNECTING** during setup, **BLUETOOTH OFF** when the phone radio is off,
+and **NOT CONNECTED** otherwise, including when
+an existing bond is known but unreachable. Disconnect pauses ATAK's route and
+its retries; it does not remove the system bond. Turning phone Bluetooth off
+suspends Samsung discovery/retries; turning it back on immediately retries
+unless the user paused the route. GATT connections explicitly use LE transport.
+Watch-origin PLI, point and emergency CoT imports/forwards run on an ordered
+background queue, outside BLE callbacks and their locks. Stopping the route
+discards queued old-session imports; an already-running import may finish.
+For local simulator checks, the debug build registers an emulator-only
+`com.weartak.companion.SIMULATE_WATCH_POINT` broadcast while the plugin is
+loaded. With BLE mode selected, send it using
+`adb -s emulator-5554 shell am broadcast -a com.weartak.companion.SIMULATE_WATCH_POINT -p com.atakmap.app.civ`.
+It imports a synthetic `SIMULATOR-WATCH-POINT` through the real CoT bridge and
+logs whether the marker appears and the UI remains responsive. Keep the emulator
+offline during this test so synthetic CoT is not sent to a TAK server.
+Release builds contain no injection receiver; physical debug phones also reject it.
+The same debug-only receiver accepts `com.weartak.companion.SIMULATE_WATCH_CHAT`,
+`com.weartak.companion.SIMULATE_WATCH_ALERT`, and
+`com.weartak.companion.SIMULATE_WATCH_CANCEL`. These exercise offline All Chat Rooms
+submission and synthetic alert/cancel import. The receiver refuses injection unless
+the emulator's Wi-Fi and mobile-data settings are both off. After an alert test,
+always send CANCEL. UI heartbeat logs alone do not establish successful dispatch;
+check the CoT bridge and ATAK chat/emergency logs as well. These checks do not test
+BLE delivery, direct TAKX addressing, or server delivery.
+Single-watch points retain their selected coordinates even when using the phone's
+identity; malformed or partial coordinates are rejected, not replaced with the
+phone location. Legacy points without coordinates use the phone fix. Titles are
+XML-escaped. Watch alerts retain their event UID for cancellation but link to the
+phone's self UID in single-watch mode; alert and cancel use the phone callsign.
+Incoming phone alert/cancel CoT is preserved for the watch's emergency ingestion,
+which feeds its map and Bloodhound targets. Point deletion remains revision- and
+session-scoped; it does not broadcast a network-wide deletion.
 For installed-state UI previews only, a debug build on a `ranchu`/`goldfish`
 emulator can treat Samsung Wearable as installed when the ATAK host's private
 `files/weartak-preview-samsung-installed` file exists. Enable with
@@ -370,29 +404,27 @@ EQUIPMENT SUPPORTED
 _________________________________________________________________
 COMPILATION
 
-This branch targets ATAK 5.8.0 (plugin-api com.atakmap.app@5.8.0.CIV for
+Plugin version 5.6.0 targets ATAK 5.6.0 (plugin-api com.atakmap.app@5.6.0.CIV for
 the CIV variant). Use JDK 17 to run Gradle 8.14.3 with Android Gradle Plugin
 8.13.2, Android SDK platform 36, compile/target SDK 36, and minimum SDK 23.
 Java source and bytecode compatibility remain Java 8.
 
 TPP should configure its authenticated takrepo.url/user/password in
 local.properties or Gradle properties. The repository resolves takdev 3.+;
-an offline/local takdev.plugin JAR must be version 3.5.3 or newer and paired
-with the ATAK 5.8 SDK. Do not use a 5.5/5.6 SDK to validate 5.8 compatibility.
-This plugin has no native sources, so no NDK installation is required;
-if native compilation is added, ATAK 5.8 requires NDK 27.3.13750724.
+an offline/local takdev.plugin JAR must be paired with the ATAK 5.6 SDK.
+This plugin has no native sources, so no NDK installation is required.
 ATAK-provided core AndroidX libraries remain excluded from implementation;
-dependency alignment follows ATAK 5.8 (core 1.17.0 except core-viewtree,
-lifecycle 2.10.0, fragment 1.8.9).
+dependency overrides retain core 1.17.0 except core-viewtree,
+lifecycle 2.10.0, and fragment 1.8.9.
 
 Run gradlew.bat :app:testCivDebugUnitTest :app:assembleCivDebug, then
 gradlew.bat :app:lintCivRelease :app:assembleCivRelease for release validation.
 An archive is source only, not a verified APK or TPP-signed package.
-ATAK 5.8 API/build and phone behavior require the matching SDK/repository
-and device testing; local tests against an older SDK do not establish them.
+ATAK 5.6 release compatibility and phone behavior require the matching
+SDK/repository and device testing.
 
 Production CIV debug resource-link/Java compilation and JVM reconciliation tests
-are described below. These local checks do not establish ATAK 5.8 compatibility
+are described below. These local checks do not establish device compatibility
 or release packaging/signing.
 
 _________________________________________________________________
@@ -522,8 +554,8 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 The production CIV debug resource-link/Java compile and all 124 JVM tests pass
 (zero failures/errors, including 11 Garmin chat/handshake regressions)
-against that installed SDK, not ATAK 5.8 APIs. The configured ATAK target remains
-5.8.0; its remote SDK tuple is unavailable offline. Full target-SDK compatibility,
+against that installed SDK. Those historical checks predate the current
+ATAK 5.6.0 target. Full target-SDK compatibility,
 APK packaging/signing and device acceptance still require the matching TAK SDK
 and TPP environment. No SDK, credentials, signing keys or local.properties are
 included.
@@ -632,9 +664,9 @@ system-pairing watch version (wearos-tak-civ-samsung-system-pairing,
 commit 9a90f83 or its successors). A TPP-signed Companion plugin cannot
 update or replace the watch app. The Companion source ZIP is for TPP
 build/signing and testing, not certification or a directly installable APK.
-Build configuration now targets ATAK 5.8.0; this source supersedes the
-50a0081 source package for ATAK 5.8 builds. Behavior on the requested
-ATAK 5.8 phone is not proven by local compilation/unit tests.
+Build configuration and plugin version now target ATAK 5.6.0.
+Behavior on the requested ATAK 5.8 phone is not established by this 5.6 target
+or by local compilation/unit tests.
 TPP must provide its normal TAK SDK/build credentials; no local SDK,
 local.properties, generated outputs, or signing key is included.
 Paired BLE Bloodhound synchronization (WEARTAK-78)
