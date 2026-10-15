@@ -76,11 +76,14 @@ is ready (exactly one connected WearTAK watch for Garmin). BLE offers Scan when
 disconnected and Disconnect when ready. Garmin no longer displays the setup-requirements paragraph;
 its Connect IQ prerequisites described in GARMIN SETUP still apply.
 When Garmin Connect is missing (including SDK `GCM_NOT_INSTALLED`), its status bar
-shows **Garmin Connect Not Found** in red. Missing Samsung Wearable shows
-**NOT INSTALLED** in red. Both provide an **Install** action to
+shows **Garmin Connect Not Found** in red, with an **Install** action to
 open the official app's Play Store listing, with a web-listing fallback when the
-Play Store is unavailable. When Samsung Wearable is installed but no watch is found,
+Play Store is unavailable. When no bonded Samsung WearTAK watch is found,
 **NOT CONNECTED** has an **Open** action to launch Samsung Wearable.
+Samsung discovery does not depend on the app's package lookup: Android package
+visibility can hide an installed Galaxy Wearable app from the ATAK host.
+If the launcher lookup is unavailable, Open tries Galaxy Wearable's explicit
+launcher activity; if launching fails, it reports the failure and opens the store listing.
 Connect/Disconnect remains available for the watch route's other states;
 no bond is removed or pairing mode changed by Install or Open.
 For installed-state UI previews only, a debug build on a `ranchu`/`goldfish`
@@ -93,7 +96,7 @@ or on physical phones. It does not simulate watch readiness or pairing.
 Open displays an explicit preview notice if the real companion app is absent.
 Garmin likewise offers **Open** to launch Garmin Connect when installed but no
 watch is connected; its connected-state Retry action is unchanged.
-The redundant no-paired-Garmin-watches helper text is hidden.
+The Garmin connection helper text is hidden in all connection states.
 **WearTAK Settings** prioritizes **Use WearTAK with this phone**: managed identity
 is read-only and uses the phone's callsign, team, and role. Profiles without a
 saved `phoneManagedSettings` value default to managed use; explicit watch values
