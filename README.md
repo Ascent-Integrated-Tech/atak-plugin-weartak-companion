@@ -137,8 +137,14 @@ requests phone management after a fresh complete watch snapshot, even when the
 watch reports `phoneManagedSettings:false` (including after a deliberate release).
 This applies to BLE, Samsung Wearable, and Garmin; reported watch state does not
 override the selected purpose. Configure Single Watch remains unmanaged and
-Gateway never provisions settings. The existing snapshot, send, and acknowledgement
-flow is retained. Reporting interval remains configurable.
+Gateway never provisions settings. BLE and Samsung distinguish transport readiness
+from management confirmation: **CONNECTED - SYNCING** remains visible until a
+successful settings acknowledgement is followed by a complete snapshot reporting
+phone management enabled. Snapshot requests and identical settings writes each
+have up to three attempts, ten seconds apart. Exhaustion or rejection shows
+**CONNECTED - SYNC FAILED**; refreshing settings or reconnecting retries.
+Disconnect, intentional unlock, and route changes cancel pending retries.
+Garmin retains its existing transaction flow. Reporting interval remains configurable.
 BLE and Samsung place server/P12 editing in a collapsed **Standalone Setup**
 section. Expanding it does not change the saved mode or send anything. For
 independent provisioning, select Configure Single Watch, send the settings, and
