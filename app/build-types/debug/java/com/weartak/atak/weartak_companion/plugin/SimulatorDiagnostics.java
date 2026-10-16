@@ -35,6 +35,7 @@ final class SimulatorDiagnostics {
     private static final String USERS = "com.weartak.companion.SIMULATE_PHONE_USERS";
     private static final String CHAT_ECHO_TEST = "com.weartak.companion.SIMULATE_CHAT_ECHO_TEST";
     private static final String RELEASE_TEST = "com.weartak.companion.SIMULATE_PHONE_MANAGEMENT_RELEASE";
+    private static final String ROUTE_TEST = "com.weartak.companion.SIMULATE_GARMIN_ROUTES";
     private static final String UID = "SIMULATOR-WATCH-POINT";
     private Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -55,7 +56,7 @@ final class SimulatorDiagnostics {
                 if (!ACTION.equals(action) && !CHAT.equals(action)
                         && !ALERT.equals(action) && !CANCEL.equals(action)
                         && !USERS.equals(action) && !CHAT_ECHO_TEST.equals(action)
-                        && !RELEASE_TEST.equals(action)) return;
+                        && !RELEASE_TEST.equals(action) && !ROUTE_TEST.equals(action)) return;
                 if (Settings.Global.getInt(context.getContentResolver(), "wifi_on", 1) != 0
                         || Settings.Global.getInt(context.getContentResolver(), "mobile_data", 1) != 0) {
                     Log.e(TAG, "Refusing synthetic traffic: disable emulator Wi-Fi and mobile data first");
@@ -63,6 +64,10 @@ final class SimulatorDiagnostics {
                 }
                 if (USERS.equals(action)) {
                     users.start(map);
+                    return;
+                }
+                if (ROUTE_TEST.equals(action)) {
+                    GarminRouteDiagnostics.run(map);
                     return;
                 }
                 if (CHAT_ECHO_TEST.equals(action)) {
@@ -120,6 +125,7 @@ final class SimulatorDiagnostics {
         filter.addAction(USERS);
         filter.addAction(CHAT_ECHO_TEST);
         filter.addAction(RELEASE_TEST);
+        filter.addAction(ROUTE_TEST);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
         } else {

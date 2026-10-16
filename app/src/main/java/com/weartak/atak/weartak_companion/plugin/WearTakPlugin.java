@@ -83,6 +83,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private GarminConnectIqClient garminClient;
     private GarminEntityForwarder garminEntities;
     private GarminMapEntitySource garminEntitySource;
+    private GarminRouteForwarder garminRoutes;
+    private GarminRouteMapSource garminRouteSource;
     private GarminEntityForwarder.Link garminSettingsLink;
     private final GarminSettingsTransaction garminSettingsTransaction = new GarminSettingsTransaction();
     private Map<String, Object> garminSettingsDraftAtSend;
@@ -118,6 +120,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (garminEntities != null) garminEntities.close();
                     garminEntities = null;
                     garminEntitySource = null;
+                    if (garminRoutes != null) garminRoutes.close();
+                    garminRoutes = null;
+                    garminRouteSource = null;
                     if (bloodhoundBridge != null) {
                         bloodhoundBridge.close();
                         bloodhoundBridge = null;
@@ -1318,6 +1323,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     }
                                     renderGarminConnection(connected);
                                     if (garminEntities != null) garminEntities.refreshLinks();
+                                    if (garminRoutes != null) garminRoutes.refreshLinks();
                                     refreshGarminSettingsLink();
                                     if (managementRelease.isPending() && releaseCurrent != null
                                             && !releaseCurrent.getAsBoolean()) {
@@ -1368,6 +1374,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     runnable -> mainHandler.post(runnable),
                     () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
             garminEntities.start();
+            garminRouteSource = new GarminRouteMapSource(MapView.getMapView());
+            garminRoutes = new GarminRouteForwarder(garminRouteSource, owner::entityLinks,
+                    runnable -> mainHandler.post(runnable),
+                    () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
+            garminRoutes.start();
             startPhoneAlertForwarding(token);
             garminClient.start();
     }
@@ -1633,6 +1644,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
         if ("entity_sync_request".equals(msgType)) {
             JSONObject requestPayload = envelope.optJSONObject("payload");
+            if (garminClient != null && requestPayload != null) {
+                garminClient.setRouteVersion(link, requestPayload.optInt("routeVersion", 0));
+            }
             int requestedLimit = requestPayload == null ? 50 : requestPayload.optInt("limit", 50);
             if (garminEntities == null || !garminEntities.sendSnapshot(link, requestedLimit)) {
                 Log.w(TAG, "Unable to send Garmin entity snapshot");
@@ -1644,12 +1658,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         + garminEntities.snapshotSize() + " nearest entities (limit 50)"
                         + (garminEntities.snapshotTruncated() ? "; additional entities omitted." : "."));
             }
+            if (garminRoutes != null) garminRoutes.refreshLink(link);
             return;
         }
         if ("relay_hello".equals(msgType) && garminClient != null) {
             if (garminEntities != null) garminEntities.refreshLinks();
             JSONObject hello = envelope.optJSONObject("payload");
             if (hello != null) {
+                garminClient.setRouteVersion(link, hello.optInt("routeVersion", 0));
+                if (garminRoutes != null) garminRoutes.refreshLink(link);
                 try {
                     Map<String, Object> status = GarminChatPolicy.relayStatus(
                             hello, isCurrentGarminBloodhoundLink(link));
