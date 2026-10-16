@@ -5,10 +5,7 @@ include:
 
 release_build_and_sign:
   stage: build
-  extends: .build_and_sign
-  before_script:
-    - echo "takrepo.url=https://artifacts.tak.gov/artifactory/maven" >> local.properties
-    - !reference [.build_and_sign, before_script]
+  extends: .build_and_sign_jdk17
   variables:
     variants: "civ"
   rules:
