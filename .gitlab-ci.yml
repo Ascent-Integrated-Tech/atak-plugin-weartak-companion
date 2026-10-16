@@ -41,6 +41,8 @@ release_build_and_sign:
         'https://artifacts.tak.gov/artifactory/maven-release/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
       probe 'TAK plugin / maven' \
         'https://artifacts.tak.gov/artifactory/maven/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'TAK plugin / maven-tooling-local' \
+        'https://artifacts.tak.gov/artifactory/maven-tooling-local/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
       probe 'NVD metadata / CI token' \
         'https://artifacts.tak.gov/artifactory/nvdcve/nvdcve-modified.meta'
   variables:
