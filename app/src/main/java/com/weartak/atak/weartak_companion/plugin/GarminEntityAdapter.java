@@ -10,6 +10,10 @@ import java.util.Map;
 final class GarminEntityAdapter {
     private GarminEntityAdapter() { }
 
+    static boolean validUserLifetime(long updated, long duration) {
+        return updated > 0 && duration > 0 && updated <= Long.MAX_VALUE - duration;
+    }
+
     static Map<String, Object> normalize(String uid, double lat, double lon, String type,
             Map<String, Object> metadata, boolean self, boolean watchOrigin) {
         if (self || watchOrigin || uid == null || uid.trim().isEmpty()
@@ -27,6 +31,10 @@ final class GarminEntityAdapter {
         entity.put("uid", uid);
         entity.put("type", type);
         if ("b-m-p-s-p-i".equals(type)) entity.put("isPoint", true);
+        if (!alert && type.startsWith("a-") && Boolean.TRUE.equals(metadata.get("isUser"))) {
+            entity.put("isUser", true);
+            entity.put("isPoint", false);
+        }
         if (location) {
             entity.put("lat", lat);
             entity.put("lon", lon);
@@ -35,6 +43,9 @@ final class GarminEntityAdapter {
                 "time", "start", "stale", "senderUID"}) {
             String value = text(metadata, key);
             if (!value.isEmpty()) entity.put(key, value);
+        }
+        for (String key : new String[]{"contact", "__group", "track"}) {
+            if (metadata.get(key) instanceof Map) entity.put(key, metadata.get(key));
         }
         if (alert) {
             entity.put("isAlert", true);
@@ -77,8 +88,14 @@ final class GarminEntityAdapter {
 
     static List<Map<String, Object>> nearest(List<Map<String, Object>> candidates,
             double selfLat, double selfLon, int requestedLimit) {
+        return nearestCandidates(candidates, selfLat, selfLon, Math.min(requestedLimit, 50));
+    }
+
+    // One extra candidate lets the wire snapshot report truncation accurately.
+    static List<Map<String, Object>> nearestCandidates(List<Map<String, Object>> candidates,
+            double selfLat, double selfLon, int requestedLimit) {
         if (!PhoneFixValidator.isUsable(selfLat, selfLon)) return Collections.emptyList();
-        int limit = Math.max(1, Math.min(requestedLimit, 50));
+        int limit = Math.max(1, Math.min(requestedLimit, 51));
         List<Map<String, Object>> valid = new ArrayList<>();
         for (Map<String, Object> entity : candidates) {
             Object lat = entity.get("lat"), lon = entity.get("lon");

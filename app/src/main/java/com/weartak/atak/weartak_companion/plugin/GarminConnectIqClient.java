@@ -43,6 +43,9 @@ public final class GarminConnectIqClient {
         boolean appInfoPending;
         volatile boolean connected;
         GarminEntityForwarder.Link entityLink;
+        volatile String relaySession = "";
+        volatile int entitySyncVersion = 1;
+        volatile String watchUid = "";
         long linkGeneration;
         DeviceApp(IQDevice device) {
             this.device = device;
@@ -314,6 +317,20 @@ public final class GarminConnectIqClient {
         return accepted;
     }
 
+    synchronized boolean stopOnlyReadyLink(GarminEntityForwarder.Link expected) {
+        List<GarminEntityForwarder.Link> links = entityLinks();
+        if (links.size() != 1 || links.get(0) != expected || !expected.isCurrent()) return false;
+        stop();
+        return true;
+    }
+
+    synchronized boolean sendOnlyReadyLink(GarminEntityForwarder.Link expected,
+            String type, Map<String, Object> payload) {
+        List<GarminEntityForwarder.Link> links = entityLinks();
+        return links.size() == 1 && links.get(0) == expected && expected.isCurrent()
+                && expected.send(type, payload);
+    }
+
     synchronized List<GarminEntityForwarder.Link> entityLinks() {
         List<GarminEntityForwarder.Link> links = new ArrayList<>();
         synchronized (lock) {
@@ -334,6 +351,11 @@ public final class GarminConnectIqClient {
                                 Map<String, Object> envelope = new HashMap<>();
                                 envelope.put("msgType", type);
                                 envelope.put("payload", payload);
+                                if (entry.entitySyncVersion >= 2 && ("entity".equals(type)
+                                        || "entities".equals(type) || "entity_remove".equals(type))) {
+                                    if (entry.relaySession.isEmpty()) return false;
+                                    envelope.put("relaySession", entry.relaySession);
+                                }
                                 try {
                                     connectIQ.sendMessage(entry.device, entry.app, envelope,
                                             (device, app, status) -> {
@@ -346,6 +368,15 @@ public final class GarminConnectIqClient {
                                     Log.w(TAG, "Garmin entity handoff rejected", e);
                                     return false;
                                 }
+                            }
+                        }
+                        @Override public int entitySyncVersion() { return entry.entitySyncVersion; }
+                        @Override public String relaySession() { return entry.relaySession; }
+                        @Override public String watchUid() { return entry.watchUid; }
+                        @Override public boolean sendForSession(String type, Map<String, Object> payload,
+                                String expectedSession) {
+                            synchronized (GarminConnectIqClient.this) {
+                                return entry.relaySession.equals(expectedSession) && send(type, payload);
                             }
                         }
                     };
@@ -509,6 +540,12 @@ public final class GarminConnectIqClient {
                                 if (item instanceof Map) {
                                     JSONObject envelope = toJsonObject((Map<?, ?>) item);
                                     if (envelope != null && listener != null) {
+                                        if ("relay_hello".equals(envelope.optString("msgType"))) {
+                                            JSONObject hello = envelope.optJSONObject("payload");
+                                            entry.relaySession = hello == null ? "" : hello.optString("relaySession", "");
+                                            entry.entitySyncVersion = hello == null ? 1 : hello.optInt("entitySyncVersion", 1);
+                                            entry.watchUid = hello == null ? "" : hello.optString("watchUid", "");
+                                        }
                                         entityLinks();
                                         listener.onMessageReceived(envelope, entry.entityLink);
                                     }

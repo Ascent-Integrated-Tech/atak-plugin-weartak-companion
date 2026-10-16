@@ -33,6 +33,38 @@ public class GarminConnectIqClientTest {
         assertTrue(client.isConnected());
     }
 
+    @Test public void acknowledgedPauseStopsOnlyOriginalExclusiveReadyLink() {
+        connect();
+        GarminEntityForwarder.Link original = client.entityLinks().get(0);
+        Map<String, Object> request = Collections.singletonMap("requestId",
+                "12345678-1234-1234-1234-123456789abc");
+        assertTrue(client.sendOnlyReadyLink(original, PhoneManagementRelease.COMMAND, request));
+        assertEquals(PhoneManagementRelease.COMMAND, sdk.envelopes.get(0).get("msgType"));
+        assertEquals(request, sdk.envelopes.get(0).get("payload"));
+        assertTrue(client.stopOnlyReadyLink(original));
+        assertFalse(original.isCurrent());
+        assertFalse(client.isConnected());
+        connect();
+        assertFalse(client.stopOnlyReadyLink(original));
+        assertFalse(client.sendOnlyReadyLink(original, PhoneManagementRelease.COMMAND, request));
+        assertTrue(client.isConnected());
+        assertTrue(client.entityLinks().get(0).isCurrent());
+    }
+
+    @Test public void acknowledgedPauseCannotStopMultipleReadyWatches() {
+        sdk.known = Arrays.asList(watch, new IQDevice(2, "Other"));
+        client.start();
+        sdk.lifecycle.onSdkReady();
+        List<GarminEntityForwarder.Link> links = client.entityLinks();
+        assertEquals(2, links.size());
+        assertFalse(client.sendOnlyReadyLink(links.get(0), PhoneManagementRelease.COMMAND,
+                Collections.singletonMap("requestId", "12345678-1234-1234-1234-123456789abc")));
+        assertTrue(sdk.sent.isEmpty());
+        assertFalse(client.stopOnlyReadyLink(links.get(0)));
+        assertTrue(links.get(0).isCurrent());
+        assertTrue(links.get(1).isCurrent());
+    }
+
     @Test public void entityLinksTargetOneWatchAndRetireOnDisconnect() {
         sdk.known = Arrays.asList(watch, new IQDevice(2, "Other"));
         client.start();
@@ -103,6 +135,34 @@ public class GarminConnectIqClientTest {
         assertEquals(count, sdk.sent.size());
         forwarder.close();
         assertEquals(1, source.unsubscriptions);
+    }
+
+    @Test public void negotiatedUserProtocolAddsNativeSessionToEntityFamiliesOnly() {
+        connect();
+        Map<String, Object> hello = new HashMap<>();
+        hello.put("relaySession", "watch-session");
+        hello.put("entitySyncVersion", 2);
+        hello.put("watchUid", "watch-uid");
+        Map<String, Object> request = new HashMap<>();
+        request.put("msgType", "relay_hello");
+        request.put("payload", hello);
+        sdk.appListeners.get(1L).onMessageReceived(watch, sdk.app,
+                Collections.singletonList(request), ConnectIQ.IQMessageStatus.SUCCESS);
+        GarminEntityForwarder.Link link = client.entityLinks().get(0);
+        assertEquals(2, link.entitySyncVersion());
+        assertEquals("watch-uid", link.watchUid());
+        for (String type : Arrays.asList("entity", "entities", "entity_remove")) {
+            assertTrue(link.send(type, Collections.singletonMap("uid", "remote")));
+            assertEquals("watch-session", sdk.envelopes.get(sdk.envelopes.size() - 1).get("relaySession"));
+        }
+        assertTrue(link.send("watch_settings", Collections.emptyMap()));
+        assertFalse(sdk.envelopes.get(sdk.envelopes.size() - 1).containsKey("relaySession"));
+        hello.put("relaySession", "replacement");
+        sdk.appListeners.get(1L).onMessageReceived(watch, sdk.app,
+                Collections.singletonList(request), ConnectIQ.IQMessageStatus.SUCCESS);
+        assertEquals("replacement", link.relaySession());
+        assertFalse(link.sendForSession("entity", Collections.singletonMap("uid", "old"), "watch-session"));
+        assertTrue(link.sendForSession("entity", Collections.singletonMap("uid", "new"), "replacement"));
     }
 
     @Test

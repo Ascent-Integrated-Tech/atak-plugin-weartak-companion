@@ -26,6 +26,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     private String connectingAddress = null;
     private String connectedAddress = null;
     private boolean settingsVisible;
+    private boolean disconnectPending;
 
     public BleDeviceAdapter(Listener listener) {
         this.listener = listener;
@@ -59,6 +60,11 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
         notifyDataSetChanged();
     }
 
+    public void setDisconnectPending(boolean pending) {
+        disconnectPending = pending;
+        notifyDataSetChanged();
+    }
+
     @NonNull
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -88,9 +94,9 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
         });
 
         if (isConnected) {
-            h.deviceState.setText("Connected");
-            h.actionButton.setText("Disconnect");
-            h.actionButton.setEnabled(true);
+            h.deviceState.setText(disconnectPending ? "Confirming unlock…" : "Connected");
+            h.actionButton.setText(disconnectPending ? "Wait" : "Disconnect");
+            h.actionButton.setEnabled(!disconnectPending);
             h.actionButton.setOnClickListener(v -> {
                 if (listener != null) listener.onDisconnectClicked();
             });

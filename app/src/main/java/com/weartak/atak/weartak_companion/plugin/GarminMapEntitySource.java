@@ -1,14 +1,21 @@
 package com.weartak.atak.weartak_companion.plugin;
 
 import com.atakmap.android.maps.MapEvent;
+import com.atakmap.android.contact.Contact;
+import com.atakmap.android.contact.ContactUtil;
+import com.atakmap.android.contact.Contacts;
+import com.atakmap.android.contact.IndividualContact;
 import com.atakmap.android.maps.MapEventDispatcher;
 import com.atakmap.android.maps.MapItem;
+import com.atakmap.android.maps.Marker;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.android.importexport.CotEventFactory;
 import com.atakmap.coremap.cot.event.CotDetail;
 import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.coremap.maps.coords.GeoPoint;
+import com.atakmap.coremap.maps.time.CoordinatedTime;
+import com.atakmap.comms.NetConnectString;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -80,7 +87,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
                 removal = removed;
             }
             if (removal != null) removal.accept(item.getUID());
-            // Removal is not cancellation: Garmin has no paired-revision deletion contract.
+            // The forwarder emits scoped removals only for published remote users.
             return;
         }
         observe(item);
@@ -96,14 +103,34 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         }
         Map<String, Object> entity = normalize(item);
         if (entity != null) target.accept(entity);
+        else {
+            Consumer<String> removal;
+            synchronized (this) { removal = removed; }
+            if (removal != null) removal.accept(item.getUID());
+        }
     }
 
     private Map<String, Object> normalize(MapItem item) {
         if (!(item instanceof PointMapItem) || item.getUID() == null || item == map.getSelfMarker()
                 || item.hasMetaValue("nevercot")) return null;
         try {
-            CotEvent event = CotEventFactory.createCotEvent(item);
+            CotEvent event = item instanceof Marker ? PhoneUserCot.export((Marker) item)
+                    : CotEventFactory.createCotEvent(item);
             if (event == null || !item.getUID().equals(event.getUID())) return null;
+            long updated = item.getMetaLong("lastUpdateTime", 0);
+            long duration = item.getMetaLong("autoStaleDuration", 0);
+            boolean user = event.getType() != null && event.getType().startsWith("a-")
+                    && item instanceof Marker && PhoneUserCot.isUser(item, event)
+                    && event.findDetail("emergency") == null;
+            if (user && !GarminEntityAdapter.validUserLifetime(updated, duration)) {
+                warning("Garmin user omitted: missing or invalid source lifetime for " + item.getUID());
+                return null;
+            }
+            if (GarminEntityAdapter.validUserLifetime(updated, duration)) {
+                event.setTime(new CoordinatedTime(updated));
+                event.setStart(new CoordinatedTime(updated));
+                event.setStale(new CoordinatedTime(updated + duration));
+            }
             return normalize(event, item);
         } catch (RuntimeException e) {
             android.util.Log.w("WTK/GarminEntity", "Unable to normalize map entity", e);
@@ -132,6 +159,23 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         Map<String, Object> meta = new HashMap<>();
         CotDetail contact = event.findDetail("contact"), group = event.findDetail("__group");
         CotDetail emergency = event.findDetail("emergency"), link = event.findDetail("link");
+        boolean user = event.getType() != null && event.getType().startsWith("a-")
+                && item instanceof Marker && PhoneUserCot.isUser(item, event)
+                && !PhoneEmergencyRelay.isEmergencyType(event.getType()) && emergency == null;
+        meta.put("isUser", user);
+        if (user) {
+            Map<String, Object> userContact = detail(contact, "callsign", "endpoint");
+            if (!userContact.containsKey("endpoint")) {
+                Contact known = Contacts.getInstance().getContactByUuid(uid);
+                if (known instanceof IndividualContact) {
+                    NetConnectString endpoint = ContactUtil.getIpAddress((IndividualContact) known);
+                    if (endpoint != null) userContact.put("endpoint", endpoint.toString());
+                }
+            }
+            meta.put("contact", userContact);
+            meta.put("__group", detail(group, "name", "role"));
+            meta.put("track", detail(event.findDetail("track"), "course", "speed"));
+        }
         put(meta, "callSign", attribute(contact, "callsign"));
         put(meta, "team", attribute(group, "name"));
         put(meta, "role", attribute(group, "role"));
@@ -177,7 +221,22 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             Map<String, Object> entity = normalize(item);
             if (entity != null) candidates.add(entity);
         }
-        return GarminEntityAdapter.nearest(candidates, self.getLatitude(), self.getLongitude(), limit);
+        return GarminEntityAdapter.nearestCandidates(candidates, self.getLatitude(), self.getLongitude(), limit);
+    }
+
+    @Override public List<String> excludedUids() {
+        return map.getSelfMarker() == null ? Collections.emptyList()
+                : Collections.singletonList(map.getSelfMarker().getUID());
+    }
+
+    @Override public void warning(String message) {
+        android.util.Log.w("WTK/GarminEntity", message);
+    }
+
+    private static Map<String, Object> detail(CotDetail detail, String... attributes) {
+        Map<String, Object> result = new HashMap<>();
+        for (String key : attributes) put(result, key, attribute(detail, key));
+        return result;
     }
 
     private static String attribute(CotDetail detail, String key) {
