@@ -1,0 +1,12 @@
+include:
+  - project: 'devsecops/gitlab-ci-common'
+    ref: master
+    file: '/template/build_and_sign.yml'
+
+release_build_and_sign:
+  stage: build
+  extends: .build_and_sign
+  variables:
+    variants: "civ"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
