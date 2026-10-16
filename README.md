@@ -132,14 +132,17 @@ Garmin likewise offers **Open** to launch Garmin Connect when installed but no
 watch is connected; its connected-state Retry action is unchanged.
 The Garmin connection helper text is hidden in all connection states.
 **WearTAK Settings** prioritizes **Use WearTAK with this phone**: managed identity
-is read-only and uses the phone's callsign, team, and role. Profiles without a
-saved `phoneManagedSettings` value default to managed use; explicit watch values
-(including `false`) are preserved. Changes still use the existing watch snapshot,
-send, and acknowledgement flow. Reporting interval remains configurable.
+is read-only and uses the phone's callsign, team, and role. Bond Single Watch
+requests phone management after a fresh complete watch snapshot, even when the
+watch reports `phoneManagedSettings:false` (including after a deliberate release).
+This applies to BLE, Samsung Wearable, and Garmin; reported watch state does not
+override the selected purpose. Configure Single Watch remains unmanaged and
+Gateway never provisions settings. The existing snapshot, send, and acknowledgement
+flow is retained. Reporting interval remains configurable.
 BLE and Samsung place server/P12 editing in a collapsed **Standalone Setup**
-section. Expanding it does not change the saved mode or send anything. Disable
-phone-managed use for independent provisioning, send the settings, and wait for
-the watch's save confirmation before disconnecting. Garmin hides standalone
+section. Expanding it does not change the saved mode or send anything. For
+independent provisioning, select Configure Single Watch, send the settings, and
+wait for the watch's save confirmation before disconnecting. Garmin hides standalone
 setup because its current profile protocol does not provision servers or P12.
 The title-row purpose selector offers **Bond Single Watch**, **Configure Single
 Watch**, and **Multiwatch Gateway**, in that order. Bond Single Watch keeps the
@@ -841,3 +844,13 @@ without echo deletion or startup replay. These are pending hardware acceptance
 checks, not claims of device validation. With a third TAK/network peer displaying
 the same point, delete on either paired device and verify that third peer retains
 its copy and receives no deletion packet.
+
+## WEARTAK-158 / 160 / 161 release candidate
+
+This candidate combines selective watch-chat echo suppression, remote TAK user
+map relay, and acknowledged release of phone-managed watch settings on intentional
+disconnect. The chat wrapper uses ATAK's public listener API and has a small,
+non-atomic listener replacement window. Emulator-only debug checks cover chat
+listener lifecycle, synthetic remote-user snapshots and updates, and release
+state-machine acknowledgements; they do not replace paired-watch interoperability
+testing. Unlock requires watch firmware that supports `release_phone_management`.

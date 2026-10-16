@@ -855,6 +855,12 @@ public class WearTakBleClient {
         resetSession("disconnect()");
     }
 
+    synchronized boolean disconnectReadySession(long expectedSession) {
+        if (expectedSession < 0 || expectedSession != getReadySession()) return false;
+        disconnect();
+        return true;
+    }
+
     private AutoReconnectPreference reconnectPreference() {
         return new AutoReconnectPreference(PluginPrefs.get(baseContext, retryPreferences));
     }

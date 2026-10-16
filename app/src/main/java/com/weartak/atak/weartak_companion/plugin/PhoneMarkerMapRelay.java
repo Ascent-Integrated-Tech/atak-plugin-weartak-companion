@@ -256,7 +256,7 @@ final class PhoneMarkerMapRelay {
                     && item.getUID().equals(mapView.getSelfMarker().getUID()))
                 || item.getMetaBoolean("emergency", false)
                 || item.hasMetaValue("emergency") || item.hasMetaValue("nevercot")
-                || event.findDetail("__group") != null || event.findDetail("track") != null
+                || PhoneUserCot.isUser(item, event)
                 || event.findDetail("emergency") != null
                 || !item.getUID().equals(event.getUID());
         return new PhoneMarkerRelay.Snapshot(event.getUID(), event.getType(), point.getLat(),

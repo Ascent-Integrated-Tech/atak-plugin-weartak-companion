@@ -61,6 +61,7 @@ public class BleCotBridge {
     private GarminConnectIqClient garminClient;
     private ChatManagerMapComponent chatManager;
     private Consumer<Bundle> gatewayChatForwarder;
+    private Consumer<Runnable> watchChatSend = Runnable::run;
     private final ChatManagerMapComponent.ChatMessageListener chatMessageListener =
             this::forwardChatToWatch;
 
@@ -674,6 +675,10 @@ public class BleCotBridge {
         return manager;
     }
 
+    void setWatchChatSend(Consumer<Runnable> sender) {
+        watchChatSend = sender;
+    }
+
     public void sendChat(String envelopeJson) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             if (!new Handler(Looper.getMainLooper()).post(() -> sendChat(envelopeJson))) {
@@ -690,7 +695,7 @@ public class BleCotBridge {
             }
 
             ChatReplyPayload reply = new ChatReplyPayload(p);
-            ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text,
+            watchChatSend.accept(() -> ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text,
                     new ChatReplyRouter.Targets<Contact>() {
                         public Contact find(String uid) {
                             Contact target = Contacts.getInstance().getContactByUuid(uid);
@@ -748,7 +753,7 @@ public class BleCotBridge {
                             if (all == null) throw new IllegalStateException("ATAK broadcast contact unavailable");
                             requireChatManager().sendMessage(text, java.util.Collections.singletonList(all));
                         }
-                    });
+                    }));
             Log.d(TAG, "Watch chat handed to ATAK; recipient delivery not confirmed");
 
         } catch (Exception e) {
