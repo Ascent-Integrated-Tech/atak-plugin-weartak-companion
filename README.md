@@ -579,6 +579,56 @@ verify direct/broadcast inbox/replies, false group capability and rejection of
 named groups without fallback, handoff-only status, SDK retry, and entity snapshots.
 Confirm a third TAK peer receives no deletion from either watch transport.
 
+### Garmin route display and point tracking
+
+The Garmin adapter exports ATAK `b-m-r` routes as versioned atomic `route`
+messages. Watches opt in with numeric `routeVersion: 1` in `relay_hello` or
+`entity_sync_request`; older watches receive no route messages. A new capable
+link or explicit refresh sends `routes_reset` before replay. Geometry, route
+metadata, additions and removals are observed while Garmin mode is active.
+Teardown removes those listeners; updates cannot cross transport generations.
+Queued changes reconcile against the current authoritative map snapshot, so
+delayed work cannot restore deleted geometry; recreation publishes only the
+current revision. Invalid geometry is preserved only for its originating map
+item, never another server's route with the same UID.
+
+Routes retain source server ID and route UID separately. Each message contains
+the route name, ordered latitude/longitude vertices with optional names, and
+optional mission name/sender UID. Limits match the watch: 8 routes, 2–64 vertices
+per route, 128 vertices total, and 6,000 UTF-8 bytes per serialized envelope.
+Text limits in UTF-8 bytes are server ID 64, UID 128, route/point name 64,
+mission/sender UID 128, and error 256. Invalid or oversized updates preserve the
+last valid geometry and report `routes_error`; capacity omissions also report
+an error once per continuous capacity condition (and again after explicit refresh).
+Rejected warning handoffs retry on the next reconciliation. Routes are never
+silently simplified. Removal sends `route_remove`
+for that source/UID only. Freed route/vertex capacity is filled automatically
+after removal or shrinking geometry, retaining published routes first and
+selecting new candidates in source-server/UID order. Immediately rejected SDK
+updates and removals retain retry state for the next map/link reconciliation;
+ordinary reconciliation does not reset watch-local route tracking. No raw route
+XML is logged.
+
+On Garmin, **Map > Layers > Routes** lists every vertex and exposes point
+details and local Bloodhound range/bearing/proximity alerts. Overlapping map
+points use the existing selection menu. Route tracking is local to the watch:
+synthetic vertex identities are not sent to native ATAK Bloodhound, which still
+requires an existing point map item. Ordinary-point synchronized Bloodhound
+is unchanged. Refresh resets route tracking and repairs a missed SDK handoff;
+there are no end-to-end delivery acknowledgements.
+
+Focused checks: `GarminRouteProtocolTest`, `GarminRouteForwarderTest`,
+`GarminRouteSourceCacheTest`, existing
+Garmin Connect IQ/entity forwarding tests and `BloodhoundSyncTest`. Production
+Java compilation uses the locally available ATAK SDK. The debug-only emulator
+action `com.weartak.companion.SIMULATE_GARMIN_ROUTES` requires Wi-Fi and mobile data
+disabled and exercises native ATAK route addition, ordered coordinates, geometry
+edits, renaming, removal and listener teardown using the production route source
+and an in-memory watch link. Android XML parsing rejects DTD/entity declarations
+and external resolution without requiring unsupported desktop JAXP feature flags.
+Native observation is simulator-verified; target-SDK packaging and physical
+Garmin/ATAK delivery remain acceptance requirements.
+
 ### WEARTAK-128: Garmin Bloodhound synchronization
 
 Garmin Connect IQ negotiates Bloodhound version 1 in the existing session-bound
@@ -850,6 +900,41 @@ without echo deletion or startup replay. These are pending hardware acceptance
 checks, not claims of device validation. With a third TAK/network peer displaying
 the same point, delete on either paired device and verify that third peer retains
 its copy and receives no deletion packet.
+
+CHAT ECHO SUPPRESSION (WEARTAK-158)
+
+In single-watch purpose (Traditional BLE, Samsung Wearable, or Garmin Connect IQ),
+the plugin records the exact CoT identity of chats sent through the watch's
+`sendChat` path. Its incoming wrapper drops only an exact matching `b-t-f` echo
+before `GeoChatService` can store it, mark it unread, or notify. Direct, group,
+and All Chat Rooms sends share this path; new messages, ordinary phone sends,
+and delivery/read receipts are forwarded unchanged. Matching is bounded to 256
+identities and ten minutes and fails open if the server changes the CoT identity.
+Gateway purpose is not intercepted.
+
+The debug emulator diagnostics exercise the production filter. With emulator
+Wi-Fi and mobile data disabled, send the
+`com.weartak.companion.SIMULATE_CHAT_ECHO_TEST` broadcast. It sends an offline watch
+chat, replays two exact copies through ATAK's receive path, checks sent history and
+unread count, then injects a new message from another sender and checks that unread
+count increases. It also checks that an ordinary phone send is not filtered and
+that chat still works after stopping and restarting the filter. Keep the chat
+conversation closed to verify its notification.
+
+The plugin uses ATAK 5.6's public listener registration methods; it does not modify
+ATAK core or global notification preferences. On plugin stop or when switching to
+Gateway purpose, it removes the wrapper and restores the original
+`GeoChatService` listener. Failed installation rolls back to the original listener
+and logs that watch echoes may notify ATAK.
+
+**Known lifecycle risk:** ATAK exposes no atomic listener replacement or selective
+notification veto. The public remove/add operations are separate; an incoming chat
+at that transition can be missed. This is minimized by doing the swap synchronously
+on plugin lifecycle transitions, but cannot be eliminated through the plugin API.
+The exact filter has simulator and unit coverage; direct/group echo behavior with
+real ATAK servers, plugin lifecycle transitions under live traffic, and BLE/Garmin
+hardware delivery still require paired-device acceptance. The simulator broadcast
+and observer are debug-only; the production filter is included in release builds.
 
 ## WEARTAK-158 / 160 / 161 release candidate
 

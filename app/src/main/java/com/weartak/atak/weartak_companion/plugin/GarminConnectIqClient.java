@@ -42,6 +42,7 @@ public final class GarminConnectIqClient {
         boolean appEventsRegistered;
         boolean appInfoPending;
         volatile boolean connected;
+        volatile int routeVersion;
         GarminEntityForwarder.Link entityLink;
         volatile String relaySession = "";
         volatile int entitySyncVersion = 1;
@@ -288,6 +289,11 @@ public final class GarminConnectIqClient {
         Map<String, Object> envelope = new HashMap<>();
         envelope.put("msgType", msgType);
         envelope.put("payload", payload == null ? new HashMap<String, Object>() : payload);
+        if ("route".equals(msgType)
+                && !GarminRouteProtocol.fitsEnvelope(msgType, payload)) {
+            Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + msgType);
+            return false;
+        }
 
         boolean accepted = false;
         for (DeviceApp target : targets) {
@@ -345,12 +351,20 @@ public final class GarminConnectIqClient {
                                         && entry.appEventsRegistered && entry.entityLink == this;
                             }
                         }
+                        @Override public int routeVersion() {
+                            return isCurrent() ? entry.routeVersion : 0;
+                        }
                         @Override public boolean send(String type, Map<String, Object> payload) {
                             synchronized (GarminConnectIqClient.this) {
                                 if (!isCurrent()) return false;
                                 Map<String, Object> envelope = new HashMap<>();
                                 envelope.put("msgType", type);
                                 envelope.put("payload", payload);
+                                if ("route".equals(type)
+                                        && !GarminRouteProtocol.fitsEnvelope(type, payload)) {
+                                    Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + type);
+                                    return false;
+                                }
                                 if (entry.entitySyncVersion >= 2 && ("entity".equals(type)
                                         || "entities".equals(type) || "entity_remove".equals(type))) {
                                     if (entry.relaySession.isEmpty()) return false;
@@ -385,6 +399,19 @@ public final class GarminConnectIqClient {
             }
         }
         return links;
+    }
+
+    synchronized boolean setRouteVersion(GarminEntityForwarder.Link link, int version) {
+        synchronized (lock) {
+            for (DeviceApp entry : devices.values()) {
+                if (entry.entityLink == link && isCurrentDevice(entry) && entry.connected
+                        && entry.appEventsRegistered) {
+                    entry.routeVersion = version == GarminRouteProtocol.VERSION ? version : 0;
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean isCurrentDevice(DeviceApp entry) {
@@ -424,6 +451,7 @@ public final class GarminConnectIqClient {
                     if (entry.connected != connected) {
                         entry.linkGeneration++;
                         entry.entityLink = null;
+                        entry.routeVersion = 0;
                         if (entry.appEventsRegistered && entry.app != null) {
                             try {
                                 connectIQ.unregisterForApplicationEvents(entry.device, entry.app);
