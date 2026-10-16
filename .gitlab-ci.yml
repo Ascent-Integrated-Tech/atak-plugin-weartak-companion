@@ -6,6 +6,43 @@ include:
 release_build_and_sign:
   stage: build
   extends: .build_and_sign_jdk17
+  before_script:
+    - |
+      case "${CI_DEBUG_TRACE:-false}" in
+        true|TRUE|1)
+          echo "ERROR: Disable CI_DEBUG_TRACE before running authenticated probes"
+          exit 1
+          ;;
+      esac
+    - !reference [.build_and_sign_jdk17, before_script]
+    - |
+      set +x
+      if [ -z "${CI_JOB_ARTIFACTORY_TOKEN:-}" ]; then
+        echo "ERROR: Artifactory token was not created"
+        exit 1
+      fi
+
+      probe() {
+        label="$1"
+        url="$2"
+        if code=$(printf 'header = "Authorization: Bearer %s"\n' \
+          "$CI_JOB_ARTIFACTORY_TOKEN" |
+          curl --config - --silent --show-error \
+            --connect-timeout 15 --max-time 45 \
+            --output /dev/null --write-out '%{http_code}' "$url"); then
+          printf '%s: HTTP %s\n' "$label" "$code"
+        else
+          printf 'ERROR: %s request failed\n' "$label"
+          return 1
+        fi
+      }
+
+      probe 'TAK plugin / maven-release' \
+        'https://artifacts.tak.gov/artifactory/maven-release/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'TAK plugin / maven' \
+        'https://artifacts.tak.gov/artifactory/maven/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'NVD metadata / CI token' \
+        'https://artifacts.tak.gov/artifactory/nvdcve/nvdcve-modified.meta'
   variables:
     variants: "civ"
   rules:
