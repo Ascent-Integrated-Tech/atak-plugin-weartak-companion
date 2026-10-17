@@ -94,6 +94,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private Button purposeButton;
     private boolean setupPurpose;
     private boolean gatewayPurpose;
+    private final PhoneGnssDiagnostics locationDiagnostics = new PhoneGnssDiagnostics();
+    private JSONObject watchLocationDiagnostics;
     private MultiwatchGateway gateway;
     private View garminSettingsButton;
     private View serverSettingsGroup;
@@ -109,6 +111,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
+                    stopLocationDiagnostics("connection route stopped");
                     failManagementRelease("The route stopped before unlock was confirmed.");
                     ++scanSessionCount;
                     if (gateway != null) gateway.stop();
@@ -194,6 +197,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // Device screen
     private TextView connectionStatusTV;
+    private TextView locationDiagnosticsStatus;
     private TextView garminConnectionStatusTV;
     private TextView garminConnectionBadgeTV;
     private Button garminToggleButton;
@@ -617,6 +621,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!connected) failManagementRelease("Watch disconnected before acknowledgement.");
+                    if (!connected) stopLocationDiagnostics("watch disconnected");
                     if (!connected && bleCotBridge != null) bleCotBridge.discardPendingCot();
                     if (!connected && phoneUserRelay != null) phoneUserRelay.disconnected();
                     if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
@@ -720,6 +725,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
                 try {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
+                    String diagnosticType = pointEnvelope.optString("msgType",
+                            pointEnvelope.optString("msg_type", ""));
+                    if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
+                            LocationDiagnosticsProtocol.STOP.equals(diagnosticType) ||
+                            LocationDiagnosticsProtocol.SNAPSHOT.equals(diagnosticType)) {
+                        handleLocationDiagnosticsEnvelope(pointEnvelope, incomingOwner, incomingSession);
+                        return;
+                    }
                     if (PhoneManagementRelease.ACK.equals(pointEnvelope.optString("msgType",
                             pointEnvelope.optString("msg_type", "")))) {
                         if (incomingOwner != null && incomingOwner == bleClient && incomingSession >= 0
@@ -830,6 +843,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             public void onTrustLost(String deviceAddress, String reason) {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
+                    stopLocationDiagnostics("watch bond lost");
                     clearPreferredDevice(deviceAddress);
                     clearSessionSettings();
                     updateSystemBondedControl();
@@ -957,6 +971,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         connectionModeButton.setEnabled(!connectionModes.isPairingLocked());
         connectionModeButton.setAlpha(connectionModes.isPairingLocked() ? 0.4f : 1f);
         paneView.findViewById(R.id.gatewayScroll).setVisibility(gatewayPurpose ? View.VISIBLE : View.GONE);
+        updateLocationDiagnosticsUi();
         if (purposeButton != null) purposeButton.setText(
                 gatewayPurpose ? "Multiwatch Gateway"
                         : setupPurpose ? "Configure Single Watch" : "Bond Single Watch");
@@ -1063,6 +1078,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                     setupPurpose = which == 1;
                     gatewayPurpose = which == 2;
+                    stopLocationDiagnostics("companion purpose changed");
                     phoneManagedSettingsRequested =
                             CompanionSettingsPolicy.phoneManaged(setupPurpose, gatewayPurpose);
                     if (phoneManagedSettingsCB != null) {
@@ -1170,6 +1186,136 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             handlePhoneSettingsAction(phoneSettingsHandshake.timeout(attempt, SystemClock.elapsedRealtime()));
         };
         mainHandler.postDelayed(phoneSettingsTimeout, PhoneSettingsHandshake.TIMEOUT_MILLIS);
+    }
+
+    private void handleLocationDiagnosticsEnvelope(JSONObject envelope, WearTakBleClient owner,
+                                                   long bleSession) {
+        String type = envelope.optString("msgType", envelope.optString("msg_type", ""));
+        String session = envelope.optString("session", null);
+        if (!LocationDiagnosticsProtocol.isValidSession(session)) {
+            Log.w(TAG, "Ignoring diagnostics message with invalid session token");
+            return;
+        }
+        if (LocationDiagnosticsProtocol.HELLO.equals(type)) {
+            if (owner != bleClient || bleSession != owner.getReadySession() ||
+                    !owner.isBondedConnected() ||
+                    connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL ||
+                    setupPurpose || gatewayPurpose) return;
+            JSONObject valid = LocationDiagnosticsProtocol.parse(
+                    envelope, LocationDiagnosticsProtocol.HELLO, session);
+            if (valid == null) {
+                Log.w(TAG, "Ignoring invalid bonded diagnostics capability request");
+                return;
+            }
+            startPhoneLocationDiagnostics(owner, bleSession, session);
+            return;
+        }
+        if ((!LocationDiagnosticsProtocol.SNAPSHOT.equals(type) &&
+                !LocationDiagnosticsProtocol.STOP.equals(type)) ||
+                owner != bleClient || bleSession != owner.getReadySession() ||
+                !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
+                connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) return;
+        if (LocationDiagnosticsProtocol.STOP.equals(type)) {
+            if (locationDiagnostics.stopForSession(envelope, bleSession)) {
+                watchLocationDiagnostics = null;
+                Log.i(TAG, "Bonded location diagnostics stopped: watch disabled diagnostics");
+                updateLocationDiagnosticsUi();
+            } else {
+                Log.w(TAG, "Ignoring invalid or stale watch location diagnostics stop");
+            }
+            return;
+        }
+        String activeSession = locationDiagnostics.session();
+        if (activeSession == null) return;
+        JSONObject valid = LocationDiagnosticsProtocol.parse(
+                envelope, type, activeSession);
+        if (valid == null || (LocationDiagnosticsProtocol.SNAPSHOT.equals(type) &&
+                valid.optJSONObject("payload") == null)) {
+            Log.w(TAG, "Ignoring invalid or stale watch location diagnostics snapshot");
+            return;
+        }
+        watchLocationDiagnostics = valid.optJSONObject("payload");
+        updateLocationDiagnosticsUi();
+    }
+
+    private void startPhoneLocationDiagnostics(WearTakBleClient owner, long bleSession,
+                                               String diagnosticSession) {
+        startPhoneLocationDiagnostics(owner, bleSession, diagnosticSession, 0);
+    }
+
+    private void startPhoneLocationDiagnostics(WearTakBleClient owner, long bleSession,
+                                               String diagnosticSession, int retry) {
+        if (diagnosticSession.equals(locationDiagnostics.session()) &&
+                bleSession == locationDiagnostics.readySession()) return;
+        final JSONObject capability;
+        try {
+            capability = LocationDiagnosticsProtocol.capability(diagnosticSession, true);
+        } catch (org.json.JSONException | IllegalArgumentException error) {
+            Log.e(TAG, "Unable to build diagnostics capability", error);
+            return;
+        }
+        if (!owner.writeDiagnosticJsonLineToWatch(capability.toString(), bleSession)) {
+            Log.i(TAG, "Diagnostics capability deferred while operational BLE traffic is active");
+            if (retry == 0) {
+                mainHandler.postDelayed(() -> {
+                    if (owner == bleClient && bleSession == owner.getReadySession() &&
+                            owner.isBondedConnected() && !setupPurpose && !gatewayPurpose &&
+                            connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL) {
+                        startPhoneLocationDiagnostics(owner, bleSession, diagnosticSession, 1);
+                    }
+                }, 1500L);
+            } else {
+                Log.w(TAG, "Dropping diagnostics capability after bounded operational-traffic deferral");
+            }
+            return;
+        }
+        watchLocationDiagnostics = null;
+        locationDiagnostics.start(pluginContext, diagnosticSession, bleSession, snapshot -> {
+            if (owner != bleClient || owner.getReadySession() != bleSession ||
+                    !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
+                    !diagnosticSession.equals(locationDiagnostics.session())) return;
+            if (!owner.writeDiagnosticJsonLineToWatch(snapshot.toString(), bleSession)) {
+                Log.i(TAG, "Dropping bounded diagnostics sample while operational BLE traffic is queued");
+            }
+            updateLocationDiagnosticsUi();
+        });
+        updateLocationDiagnosticsUi();
+    }
+
+    private void stopLocationDiagnostics(String reason) {
+        if (locationDiagnostics.session() == null) return;
+        locationDiagnostics.stop();
+        watchLocationDiagnostics = null;
+        Log.i(TAG, "Bonded location diagnostics stopped: " + reason);
+        updateLocationDiagnosticsUi();
+    }
+
+    private void updateLocationDiagnosticsUi() {
+        if (locationDiagnosticsStatus == null) return;
+        boolean eligible = !setupPurpose && !gatewayPurpose &&
+                connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL;
+        if (!eligible || locationDiagnostics.session() == null) {
+            locationDiagnosticsStatus.setVisibility(View.GONE);
+            return;
+        }
+        JSONObject phone = locationDiagnostics.payloadSnapshot();
+        String phoneLine = formatDiagnosticsSample("Phone", phone);
+        String watchLine = watchLocationDiagnostics == null
+                ? "Watch: waiting for observation" : formatDiagnosticsSample("Watch", watchLocationDiagnostics);
+        locationDiagnosticsStatus.setText("Bonded Location Diagnostics\n" + phoneLine + "\n" + watchLine);
+        locationDiagnosticsStatus.setVisibility(View.VISIBLE);
+    }
+
+    private String formatDiagnosticsSample(String label, JSONObject sample) {
+        String quality = LocationDiagnosticsProtocol.quality(sample);
+        String reason = sample.optString("error", sample.optString("reason", "GNSS observation unknown"));
+        String age = sample.isNull("ageMs") ? "unknown" : sample.optLong("ageMs") / 1000L + "s";
+        String accuracy = sample.isNull("accuracyM") ? "unknown"
+                : String.format(java.util.Locale.ROOT, "%.1f m", sample.optDouble("accuracyM"));
+        String sats = sample.optBoolean("satelliteStatusSupported", false)
+                ? sample.optInt("used", 0) + "/" + sample.optInt("satellites", 0) + " used" : "unknown";
+        return label + ": " + quality + " (" + reason + "); age " + age +
+                "; accuracy " + accuracy + "; satellites " + sats;
     }
 
     static void styleConnectionStatus(TextView status) {
@@ -1787,6 +1933,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
+            locationDiagnosticsStatus = paneView.findViewById(R.id.locationDiagnosticsStatus);
             garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
             garminConnectionBadgeTV = paneView.findViewById(R.id.garminConnectionBadge);
             garminSettingsButton = paneView.findViewById(R.id.garminSettingsButton);

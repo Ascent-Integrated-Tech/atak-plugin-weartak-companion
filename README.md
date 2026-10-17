@@ -17,6 +17,12 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+### Bonded Location Diagnostics (WEARTAK-165)
+
+Traditional BLE handles WearTAK's opt-in location diagnostics as version 1, session-fenced JSON messages distinct from CoT, gateway forwarding, and phone/watch location authority. The phone accepts negotiation only for a ready bonded single-watch Companion session; setup, gateway, Garmin, and Samsung routes do not start observers. The watch's session-scoped stop message immediately unregisters phone callbacks when diagnostics are disabled; a watch or phone disconnect also stops the callbacks. Unsupported versions/peers are ignored without periodic renegotiation.
+
+The phone checks location permissions and provider state explicitly. When allowed, it registers GNSS status/raw-measurement observers and a passive location listener; the passive provider does not initiate fixes or alter ATAK's location source. Snapshots contain only fix age, accuracy, provider, optional motion accuracy, and aggregate satellite/CN0/AGC measurements. Coordinates, callsigns, device IDs, and satellite identifiers are excluded. Diagnostics use a small conflated best-effort queue and are dropped while operational BLE writes are active.
+
 TRADITIONAL BLE AUTOMATIC RECONNECT
 
 Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconnect:
