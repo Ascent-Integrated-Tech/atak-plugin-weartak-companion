@@ -949,6 +949,45 @@ public class WearTakBleClient {
         return true;
     }
 
+    synchronized boolean writeDiagnosticJsonLineToWatch(String jsonLine, long expectedSession) {
+        if (gatewayOnly || jsonLine == null || expectedSession < 0 ||
+                expectedSession != getReadySession()) return false;
+        try {
+            JSONObject envelope = new JSONObject(jsonLine);
+            String type = envelope.optString("msg_type", "");
+            if (!"location_diagnostics_capability".equals(type) &&
+                    !"location_diagnostics_snapshot".equals(type)) return false;
+            if (!LocationDiagnosticsProtocol.isValidSession(envelope.optString("session", null)) ||
+                    envelope.getInt("version") != LocationDiagnosticsProtocol.VERSION ||
+                    jsonLine.getBytes(StandardCharsets.UTF_8).length >
+                            LocationDiagnosticsProtocol.MAX_MESSAGE_BYTES) return false;
+        } catch (org.json.JSONException | IllegalArgumentException error) {
+            error("Invalid bounded location diagnostics message");
+            return false;
+        }
+        if (bluetoothGatt == null || !connected || rxWriteChar == null || !hasConnectPermission()) return false;
+        BluetoothDevice device = bluetoothGatt.getDevice();
+        if (device == null || !isBonded(device)) return false;
+        byte[] bytes = (jsonLine.endsWith("\n") ? jsonLine : jsonLine + "\n")
+                .getBytes(StandardCharsets.UTF_8);
+        int maxChunk = computeMaxChunk();
+        int chunkCount = (bytes.length + maxChunk - 1) / maxChunk;
+        if (chunkCount > 32) return false;
+        synchronized (txLock) {
+            if (txInFlight || !txQueue.isEmpty()) return false;
+            for (int offset = 0; offset < bytes.length; offset += maxChunk) {
+                int size = Math.min(maxChunk, bytes.length - offset);
+                byte[] chunk = new byte[size];
+                System.arraycopy(bytes, offset, chunk, 0, size);
+                txQueue.addLast(chunk);
+            }
+            txInFlight = true;
+            long session = sessionGeneration;
+            main.post(() -> txSendNextLocked(session));
+        }
+        return true;
+    }
+
     synchronized long getReadySession() {
         return connected && servicesReady && bluetoothGatt != null ? sessionGeneration : -1;
     }

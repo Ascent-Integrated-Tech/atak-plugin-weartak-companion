@@ -108,6 +108,17 @@
             android:enabled="false" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/locationDiagnosticsStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textSize="11sp"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/systemBondedPanel"
             android:layout_width="match_parent"
