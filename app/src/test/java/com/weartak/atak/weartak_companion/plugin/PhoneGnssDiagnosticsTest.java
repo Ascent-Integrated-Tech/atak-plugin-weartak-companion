@@ -18,6 +18,23 @@ public class PhoneGnssDiagnosticsTest {
     private static final String SESSION = "01234567-89ab-cdef-0123-456789abcdef";
 
     @Test
+    public void unsupportedGnssApiReportsUnavailableWithoutCreatingCallbacks() throws Exception {
+        assertTrue(android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N);
+        PhoneGnssDiagnostics diagnostics = new PhoneGnssDiagnostics();
+        java.lang.reflect.Method register = PhoneGnssDiagnostics.class
+                .getDeclaredMethod("registerGnssCallbacks");
+        register.setAccessible(true);
+
+        register.invoke(diagnostics);
+
+        JSONObject payload = diagnostics.payloadSnapshot();
+        assertFalse(payload.getBoolean("satelliteStatusSupported"));
+        assertFalse(payload.getBoolean("measurementsSupported"));
+        assertNull(get(diagnostics, "statusCallback"));
+        assertNull(get(diagnostics, "measurementsCallback"));
+    }
+
+    @Test
     public void matchingDisableStopsObservationClearsCallbacksAndCancelsFurtherReports() throws Exception {
         PhoneGnssDiagnostics diagnostics = activeObserver();
         AtomicInteger reports = new AtomicInteger();

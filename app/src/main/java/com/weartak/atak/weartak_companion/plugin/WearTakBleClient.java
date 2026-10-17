@@ -492,6 +492,12 @@ public class WearTakBleClient {
 
         try {
             scanner.startScan(null, settings, activeScanCallback);
+        } catch (SecurityException e) {
+            scanning = false;
+            activeScanCallback = null;
+            clearScanTimeout();
+            failScan(listener, "Bluetooth scan permission denied: " + e.getMessage());
+            return;
         } catch (Throwable t) {
             scanning = false;
             activeScanCallback = null;
@@ -526,6 +532,8 @@ public class WearTakBleClient {
                     scanner.stopScan(activeScanCallback);
                 }
             }
+        } catch (SecurityException e) {
+            logW("stopScanInternal(): Bluetooth scan permission denied: " + e.getMessage());
         } catch (Throwable t) {
             logW("stopScanInternal(): stopScan threw: " + t.getMessage());
         } finally {
@@ -1046,7 +1054,13 @@ public class WearTakBleClient {
         rxWriteChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rxWriteChar.setValue(next);
 
-        boolean ok = bluetoothGatt.writeCharacteristic(rxWriteChar);
+        boolean ok;
+        try {
+            ok = bluetoothGatt.writeCharacteristic(rxWriteChar);
+        } catch (SecurityException e) {
+            failSecureSession("TX Bluetooth permission denied: " + e.getMessage(), "tx_permission_lost");
+            return;
+        }
         if (!ok) {
             synchronized (txLock) {
                 txQueue.clear();
@@ -1155,8 +1169,12 @@ public class WearTakBleClient {
                     return;
                 }
 
-                if (!gatt.requestMtu(DESIRED_MTU) && !gatt.discoverServices()) {
-                    failSecureSession("Service discovery could not start", "discovery_start_failed");
+                try {
+                    if (!gatt.requestMtu(DESIRED_MTU) && !gatt.discoverServices()) {
+                        failSecureSession("Service discovery could not start", "discovery_start_failed");
+                    }
+                } catch (SecurityException e) {
+                    failSecureSession("Bluetooth permission denied: " + e.getMessage(), "connect_permission_lost");
                 }
                 return;
             }
@@ -1186,8 +1204,12 @@ public class WearTakBleClient {
                 return;
             }
 
-            if (!gatt.discoverServices()) {
-                failSecureSession("Service discovery could not start", "discovery_start_failed");
+            try {
+                if (!gatt.discoverServices()) {
+                    failSecureSession("Service discovery could not start", "discovery_start_failed");
+                }
+            } catch (SecurityException e) {
+                failSecureSession("Bluetooth permission denied: " + e.getMessage(), "discovery_permission_lost");
             }
         }
 
@@ -1221,7 +1243,13 @@ public class WearTakBleClient {
                 return;
             }
 
-            boolean ok = gatt.setCharacteristicNotification(tx, true);
+            boolean ok;
+            try {
+                ok = gatt.setCharacteristicNotification(tx, true);
+            } catch (SecurityException e) {
+                failSecureSession("Bluetooth permission denied: " + e.getMessage(), "notify_permission_lost");
+                return;
+            }
             if (!ok) {
                 failSecureSession("setCharacteristicNotification failed", "set_notification_failed");
                 return;
@@ -1234,7 +1262,13 @@ public class WearTakBleClient {
             }
 
             cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            boolean wrote = gatt.writeDescriptor(cccd);
+            boolean wrote;
+            try {
+                wrote = gatt.writeDescriptor(cccd);
+            } catch (SecurityException e) {
+                failSecureSession("Bluetooth permission denied: " + e.getMessage(), "cccd_permission_lost");
+                return;
+            }
             if (!wrote) failSecureSession("writeDescriptor(CCCD) failed", "cccd_write_start_failed");
         }
 
@@ -1320,14 +1354,14 @@ public class WearTakBleClient {
             if (rxWriteChar == null) return;
             if (!characteristic.getUuid().equals(rxWriteChar.getUuid())) return;
 
-                if (status != BluetoothGatt.GATT_SUCCESS) {
-                    synchronized (txLock) {
-                        txQueue.clear();
-                        txInFlight = false;
-                    }
-                    failSecureSession("TX chunk write failed status=" + status, "tx_chunk_write_failed_" + status);
-                    return;
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                synchronized (txLock) {
+                    txQueue.clear();
+                    txInFlight = false;
                 }
+                failSecureSession("TX chunk write failed status=" + status, "tx_chunk_write_failed_" + status);
+                return;
+            }
 
             // send next chunk
             postTxNext();
@@ -1351,13 +1385,22 @@ public class WearTakBleClient {
     private void deliverJsonLine(String line, long receiveSession) {
         try {
             JSONObject env = new JSONObject(line);
+            if ("phone_management_ping".equals(env.optString("msgType"))) {
+                if (gatewayOnly || getReadySession() != receiveSession) return;
+                JSONObject response = PhoneManagementHeartbeat.response(env);
+                if (!writeJsonLineToWatch(response.toString(), receiveSession))
+                    logW("Could not enqueue phone management heartbeat");
+                return;
+            }
             if ("watch_info".equals(env.optString("msgType"))
                     && env.optJSONObject("payload") != null) reconnect.onHealthResponse();
             if (gatewayOnly && "gateway_ready".equals(env.optString("msgType"))
                     && gatewayHealthSession != null
                     && gatewayHealthSession.equals(env.optString("session")))
                 reconnect.onHealthResponse();
-        } catch (org.json.JSONException ignored) {}
+        } catch (org.json.JSONException failure) {
+            logW("Invalid watch control message: " + failure.getMessage());
+        }
         JsonListener l = jsonListener.get();
         if (l != null) l.onJson(line);
         if (!started || receiveSession != sessionGeneration) return;
@@ -1405,14 +1448,24 @@ public class WearTakBleClient {
         BluetoothGatt closing = bluetoothGatt;
         bluetoothGatt = null;
         servicesReady = false;
-        try {
-            if (closing != null) {
-                if (hasConnectPermission()) {
-                    try { closing.disconnect(); } catch (Throwable ignored) {}
+        if (closing != null) {
+            if (hasConnectPermission()) {
+                try {
+                    closing.disconnect();
+                } catch (SecurityException e) {
+                    logW("Bluetooth permission denied while disconnecting: " + e.getMessage());
+                } catch (RuntimeException e) {
+                    logW("Unable to disconnect GATT: " + e.getMessage());
                 }
-                try { closing.close(); } catch (Throwable ignored) {}
             }
-        } catch (Throwable ignored) {}
+            try {
+                closing.close();
+            } catch (SecurityException e) {
+                logW("Bluetooth permission denied while closing GATT: " + e.getMessage());
+            } catch (RuntimeException e) {
+                logW("Unable to close GATT: " + e.getMessage());
+            }
+        }
 
         bluetoothGatt = null;
         txNotifyChar = null;
@@ -1511,7 +1564,11 @@ public class WearTakBleClient {
         try {
             if (!hasConnectPermission()) return null;
             return d.getName();
-        } catch (Throwable ignored) {}
+        } catch (SecurityException e) {
+            logW("Bluetooth permission denied while reading device name: " + e.getMessage());
+        } catch (RuntimeException e) {
+            logW("Unable to read Bluetooth device name: " + e.getMessage());
+        }
         return null;
     }
 
@@ -1520,7 +1577,11 @@ public class WearTakBleClient {
         try {
             if (!hasConnectPermission()) return null;
             return d.getAlias();
-        } catch (Throwable ignored) {}
+        } catch (SecurityException e) {
+            logW("Bluetooth permission denied while reading device alias: " + e.getMessage());
+        } catch (RuntimeException e) {
+            logW("Unable to read Bluetooth device alias: " + e.getMessage());
+        }
         return null;
     }
 

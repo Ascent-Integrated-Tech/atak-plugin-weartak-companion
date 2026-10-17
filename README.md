@@ -373,8 +373,18 @@ editable; one-time provisioning does not replace its team or role.
 
 Use WearTAK with this phone defaults to managed use for profiles without a saved
 flag; explicit saved watch values are preserved. Managed use copies phone
-identity, syncs on reconnect, and keeps managed watch settings locked even while
-temporarily disconnected. Uncheck it and send again to release management while
+identity and syncs on reconnect. With heartbeat-capable watch firmware, the editing lock
+lasts only while the managed session is responsive (with a 30-second grace period).
+Traditional single-watch BLE answers versioned, session-fenced management heartbeats;
+Gateway, Garmin, and Samsung routes do not participate. If ATAK exits/crashes or the link
+stalls, local watch edits unlock without deleting servers, certificates, or the saved
+management opt-in. A fresh managed-settings handshake restores the lock on reconnect.
+Update both watch and Companion together; older Companion builds cannot renew this lock.
+Android 6/API 23 remains supported through core-library desugaring. Passive GNSS
+status/measurement diagnostics require API 24 or later; older phones report that
+support as unavailable without registering unsupported callbacks. BLE permission
+denial is reported rather than allowed to escape from transport callbacks.
+Uncheck it and send again to release management while
 retaining saved certificates and current reporting settings. Unpairing also
 releases management, but restores the pre-management reporting settings.
 

@@ -138,7 +138,7 @@ final class PhoneGnssDiagnostics {
                     Log.w(TAG, "Unable to remove passive location observer", error);
                 }
             }
-            if (statusCallback != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && statusCallback != null) {
                 try {
                     locationManager.unregisterGnssStatusCallback(statusCallback);
                 } catch (RuntimeException error) {
@@ -226,6 +226,15 @@ final class PhoneGnssDiagnostics {
     }
 
     private void registerGnssCallbacks() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            try {
+                payload.put("satelliteStatusSupported", false)
+                        .put("measurementsSupported", false);
+            } catch (JSONException error) {
+                Log.e(TAG, "Unable to record GNSS API support", error);
+            }
+            return;
+        }
         try {
             statusCallback = new GnssStatus.Callback() {
                 @Override public void onSatelliteStatusChanged(GnssStatus status) {

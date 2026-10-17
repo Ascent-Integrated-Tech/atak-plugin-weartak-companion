@@ -11,6 +11,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
+
 import com.atakmap.android.chat.ChatManagerMapComponent;
 import com.atakmap.android.chat.ChatDatabase;
 import com.atakmap.android.maps.MapView;
@@ -126,11 +128,7 @@ final class SimulatorDiagnostics {
         filter.addAction(CHAT_ECHO_TEST);
         filter.addAction(RELEASE_TEST);
         filter.addAction(ROUTE_TEST);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
-        } else {
-            context.registerReceiver(receiver, filter);
-        }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED);
         Log.i(TAG, "Emulator point injection available");
     }
 
