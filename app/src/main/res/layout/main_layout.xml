@@ -11,60 +11,162 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
             android:textStyle="bold"
             android:textSize="18sp"
             android:paddingBottom="6dp" />
+        <Button
+            android:id="@+id/purposeButton"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:text="Bond Single Watch"
+            android:drawableEnd="@android:drawable/arrow_down_float" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pairing Mode:"
+                android:textStyle="bold"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/connectionModeButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="BLE"
+                android:drawableEnd="@android:drawable/arrow_down_float" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/gatewayScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+            <LinearLayout
+                android:id="@+id/gatewayPanel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+        <LinearLayout
+            android:id="@+id/bleStatusRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
         <TextView
             android:id="@+id/connection_status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="DISCONNECTED"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:text="NOT CONNECTED"
             android:paddingLeft="10dp"
             android:paddingRight="10dp"
             android:paddingTop="4dp"
             android:paddingBottom="4dp"
-            android:background="@drawable/bg_chip_neutral"
-            android:textColor="@android:color/white"
-            android:layout_marginBottom="10dp" />
-
-        <CheckBox
-            android:id="@+id/autoReconnectCheckBox"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:checked="false"
-            android:text="Reconnect automatically" />
-
-        <TextView
-            android:id="@+id/autoReconnectDescription"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Try to reconnect when WearTAK closes, restarts, or disconnects unexpectedly"
-            android:textSize="12sp"
-            android:paddingBottom="8dp" />
+            android:background="@drawable/bg_chip_not_connected"
+            android:textColor="@android:color/black"
+            android:layout_marginEnd="8dp" />
 
         <Button
-            android:id="@+id/connectionModeButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Traditional BLE Pairing" />
+            android:id="@+id/scanButton"
+            android:layout_width="112dp"
+            android:layout_height="48dp"
+            android:background="@drawable/btn_gray"
+            android:textColor="@android:color/white"
+            android:text="Scan" />
+        <ImageButton
+            android:id="@+id/bleSettingsButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_gray"
+            android:src="@drawable/ic_watch_settings"
+            android:padding="12dp"
+            android:alpha="0.4"
+            android:contentDescription="WearTAK watch settings"
+            android:enabled="false" />
+        </LinearLayout>
 
         <TextView
-            android:id="@+id/connectionModeAdvisory"
+            android:id="@+id/locationDiagnosticsStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingBottom="8dp" />
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textSize="11sp"
+            android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/systemBondedWatchStatus"
+        <LinearLayout
+            android:id="@+id/systemBondedPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/system_bonded_watch_checking"
-            android:paddingBottom="8dp" />
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/systemBondedWatchStatus"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:text="NOT CONNECTED"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:background="@drawable/bg_chip_not_connected"
+                    android:textColor="@android:color/black"
+                    android:layout_marginEnd="8dp" />
+
+                <Button
+                    android:id="@+id/systemBondedConnectButton"
+                    android:layout_width="112dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/btn_gray"
+                    android:textColor="@android:color/white"
+                    android:text="Connect" />
+            <ImageButton
+                android:id="@+id/systemBondedSettingsButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/btn_gray"
+                android:src="@drawable/ic_watch_settings"
+                android:padding="12dp"
+                android:alpha="0.4"
+                android:contentDescription="WearTAK watch settings"
+                android:enabled="false" />
+            </LinearLayout>
+        </LinearLayout>
         <LinearLayout
             android:id="@+id/garminPanel"
             android:layout_width="match_parent"
@@ -74,64 +176,58 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingTop="4dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Garmin Connect IQ"
-                android:textStyle="bold" />
+            android:gravity="center_vertical">
 
             <TextView
                 android:id="@+id/garminConnectionBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
                 android:text="OFF"
-                android:textStyle="bold"
-                android:textSize="12sp"
                 android:textColor="@android:color/white"
                 android:paddingLeft="10dp"
                 android:paddingRight="10dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:background="@drawable/bg_chip_neutral" />
+                android:background="@drawable/bg_chip_neutral"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/garminToggleButton"
+                android:layout_width="112dp"
+                android:layout_height="48dp"
+                android:background="@drawable/btn_gray"
+                android:textColor="@android:color/white"
+                android:text="Retry" />
+            <ImageButton
+                android:id="@+id/garminSettingsButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/btn_gray"
+                android:src="@drawable/ic_watch_settings"
+                android:padding="12dp"
+                android:alpha="0.4"
+                android:contentDescription="WearTAK watch settings"
+                android:enabled="false" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/garminConnectionStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:visibility="gone"
             android:text="Garmin Connect IQ is off."
             android:paddingTop="4dp"
             android:paddingBottom="4dp" />
 
-        <Button
-            android:id="@+id/garminSettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:enabled="false"
-            android:text="Garmin Settings" />
-
-        <Button
-            android:id="@+id/garminToggleButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Retry Garmin Connect IQ" />
         </LinearLayout>
-
-        <Button
-            android:id="@+id/scanButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Scan for WearTAK Devices" />
 
         <TextView
             android:id="@+id/emptyState"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="No devices yet. Tap Scan."
             android:paddingTop="10dp"
             android:visibility="gone" />
 
@@ -174,7 +270,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Device Settings"
+                    android:text="WearTAK Settings"
                     android:textStyle="bold"
                     android:textSize="18sp"
                     android:gravity="center_vertical"
@@ -209,13 +305,18 @@
                     android:text="Send to Watch" />
             </LinearLayout>
 
-            <!-- Device -->
-            <TextView
+            <CheckBox
+                android:id="@+id/phoneManagedSettings"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Device"
-                android:textStyle="bold"
-                android:paddingTop="10dp"
+                android:checked="true"
+                android:text="Use WearTAK with this phone" />
+
+            <TextView
+                android:id="@+id/phoneManagedSettingsDescription"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Use this phone's ATAK identity for the connected watch."
                 android:paddingBottom="4dp" />
 
             <LinearLayout
@@ -225,50 +326,43 @@
                 android:gravity="center_vertical"
                 android:paddingTop="4dp">
 
-                <TextView
-                    android:layout_width="110dp"
+                <LinearLayout
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Watch Callsign"
+                    android:layout_weight="2"
+                    android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Callsign"
                     android:alpha="0.85" />
 
                 <EditText
                     android:id="@+id/watchCallsign"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:hint="WEAROS-XYZ"
                     android:inputType="text"
                     android:singleLine="true" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/phoneTeam"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1.5"
+                    android:layout_marginStart="8dp"
+                    android:text="Team (phone)\n—" />
+
+                <TextView
+                    android:id="@+id/phoneRole"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="Role (phone)\n—" />
 
             </LinearLayout>
-
-            <CheckBox
-                android:id="@+id/phoneManagedSettings"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:checked="false"
-                android:text="Manage watch settings from this phone" />
-
-            <TextView
-                android:id="@+id/phoneManagedSettingsDescription"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Off: upload settings and P12, then disconnect. On: sync phone identity on reconnect and lock watch settings until disabled or unpaired."
-                android:paddingBottom="4dp" />
-
-            <TextView
-                android:id="@+id/phoneTeam"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="4dp"
-                android:text="Phone team: —" />
-
-            <TextView
-                android:id="@+id/phoneRole"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="2dp"
-                android:text="Phone role: —" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -300,11 +394,24 @@
                     android:alpha="0.85" />
             </LinearLayout>
 
+            <Button
+                android:id="@+id/standaloneSetupButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Standalone Setup"
+                android:contentDescription="Show standalone TAK server and P12 setup" />
+
             <LinearLayout
                 android:id="@+id/serverSettingsGroup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:visibility="gone">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Configure a TAK server and upload a P12 for standalone watch use. Send to Watch and wait for confirmation before disconnecting."
+                    android:paddingBottom="8dp" />
                 <!-- TAK Servers -->
                 <TextView
                     android:layout_width="match_parent"

@@ -17,6 +17,12 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+### Bonded Location Diagnostics (WEARTAK-165)
+
+Traditional BLE handles WearTAK's opt-in location diagnostics as version 1, session-fenced JSON messages distinct from CoT, gateway forwarding, and phone/watch location authority. The phone accepts negotiation only for a ready bonded single-watch Companion session; setup, gateway, Garmin, and Samsung routes do not start observers. The watch's session-scoped stop message immediately unregisters phone callbacks when diagnostics are disabled; a watch or phone disconnect also stops the callbacks. Unsupported versions/peers are ignored without periodic renegotiation.
+
+The phone checks location permissions and provider state explicitly. When allowed, it registers GNSS status/raw-measurement observers and a passive location listener; the passive provider does not initiate fixes or alter ATAK's location source. Snapshots contain only fix age, accuracy, provider, optional motion accuracy, and aggregate satellite/CN0/AGC measurements. Coordinates, callsigns, device IDs, and satellite identifiers are excluded. Diagnostics use a small conflated best-effort queue and are dropped while operational BLE writes are active.
+
 TRADITIONAL BLE AUTOMATIC RECONNECT
 
 Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconnect:
@@ -25,44 +31,201 @@ Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconn
 already had its own `SystemBondedWatchConnection` retries; selecting that mode
 is not a Traditional BLE automatic-reconnect toggle.
 
-This narrow change restores the original MR15 checkbox and copy:
-**Reconnect automatically** / **Try to reconnect when WearTAK closes, restarts,
-or disconnects unexpectedly**. It is visible only in Traditional BLE and defaults
-OFF. The choice persists in ATAK's host-owned preferences, not the plugin package
-data directory. The fresh `wtk_traditional_reconnect_v1` namespace intentionally
-does not import experimental MR15 or Samsung preferences: neither can silently
-enable the new toggle. No other preference storage is migrated.
+Traditional BLE now reconnects automatically as part of the selected mode; there
+is no user-toggle checkbox or reconnect explanation in the device pane.
+The last services-ready peer persists in ATAK's host-owned preferences using
+the existing `wtk_traditional_reconnect_v1` namespace. The removed opt-in value is
+ignored, including previously saved OFF values. Experimental MR15 and Samsung peer
+preferences are not imported. No other preference storage is migrated.
 
 After a bonded, services-ready connection in the current plugin run, unexpected
 loss starts a retry after 2 seconds; failed attempts retry after 60 seconds, with
 a bounded 30-second setup watchdog (normal BLE setup still times out at 25 seconds).
 Retries address only that same already-bonded peer, never scan by name to adopt a
 different watch or create/remove a system bond. A changed address or explicit unpair
-requires manual selection/pairing. The checkbox choice and previously ready peer
-survive plugin restart; an enabled Traditional BLE run can resume retries to that
+requires manual selection/pairing. The previously ready peer
+survives plugin restart; a Traditional BLE run can resume retries to that
 same peer, but data still requires a fresh bonded/services-ready session. Selecting
 a new peer clears the previous reconnect target until the new peer reaches readiness.
 Manual Disconnect and genuine trust loss disarm retries until another ready session.
 Bluetooth OFF pauses retries and ON resumes an eligible armed peer. User scans pause
 background retries; completion resumes them without racing a manual connection.
 
-While enabled and ready, a lightweight `request_watch_info` probe runs every
+While Traditional BLE is ready, a lightweight `request_watch_info` probe runs every
 30 seconds (no settings/P12 polling). Two missed 10-second responses or a failed
 probe reset the transport and begin retry. All timers are cancelled on stop,
-toggle-off, or mode ownership changes, and generation fences reject stale callbacks.
+manual Disconnect, or mode ownership changes, and generation fences reject stale callbacks.
 The existing session-qualified data writes and current chat/local deletion/alerts/
 Bloodhound/provisioning policies are unchanged. The status listener is rebound on
 each BLE mode start so a previous mode token cannot own a restarted connection.
 
-Samsung Wearable retains its existing retry owner; it never uses this toggle or
+Samsung Wearable retains its existing retry owner; it never uses Traditional BLE retries or the
 health loop. Garmin retains its separate Connect IQ lifecycle, with named groups
 blocked, `reliableDelivery:false`, and no external point deletion.
 
-The checkbox and explanatory copy are hidden outside Traditional BLE, and the
-checkbox is disabled there. Its click handler also checks the current mode.
+Reconnect never changes
+the selected connection mode or falls back to a different mode.
 Mode teardown explicitly revokes Traditional BLE reconnect ownership before
 stopping the transport; stopped/generation-fenced probe and retry callbacks cannot
-reconnect after switching to Samsung or Garmin.
+reconnect after switching to Samsung or Garmin. The three-choice connection-mode
+dialog uses ATAK's activity context so it has a valid host window token.
+
+The device pane places **Pairing Mode:** immediately below its title, with
+**BLE**, **Garmin Connect**, and **Samsung Wearable** choices. BLE places a compact Scan
+button to the right of its status, without scan/reconnect explanations.
+All modes use a single rounded status / action / settings-gear row. Status badges
+show **NOT CONNECTED** on yellow and **CONNECTED** on green; missing-app statuses
+remain red. Action buttons
+and gears have fixed widths and matching heights; the status fills the remaining
+space. The gear opens WearTAK watch settings and stays disabled until the route
+is ready (exactly one connected WearTAK watch for Garmin). BLE offers Scan when
+disconnected and Disconnect when ready. Garmin no longer displays the setup-requirements paragraph;
+its Connect IQ prerequisites described in GARMIN SETUP still apply.
+When Garmin Connect is missing (including SDK `GCM_NOT_INSTALLED`), its status bar
+shows **Garmin Connect Not Found** in red, with an **Install** action to
+open the official app's Play Store listing, with a web-listing fallback when the
+Play Store is unavailable. When no bonded Samsung WearTAK watch is found,
+**NOT CONNECTED** has an **Open** action to launch Samsung Wearable.
+Samsung discovery does not depend on the app's package lookup: Android package
+visibility can hide an installed Galaxy Wearable app from the ATAK host.
+If the launcher lookup is unavailable, Open tries Galaxy Wearable's explicit
+launcher activity; if launching fails, it reports the failure and opens the store listing.
+Connect/Disconnect remains available for the watch route's other states;
+no bond is removed or pairing mode changed by Install or Open.
+Samsung's badge reports **CONNECTED** only after the data transport is ready,
+**CONNECTING** during setup, **BLUETOOTH OFF** when the phone radio is off,
+and **NOT CONNECTED** otherwise, including when
+an existing bond is known but unreachable. Disconnect pauses ATAK's route and
+its retries; it does not remove the system bond. Turning phone Bluetooth off
+suspends Samsung discovery/retries; turning it back on immediately retries
+unless the user paused the route. GATT connections explicitly use LE transport.
+Watch-origin PLI, point and emergency CoT imports/forwards run on an ordered
+background queue, outside BLE callbacks and their locks. Stopping the route
+discards queued old-session imports; an already-running import may finish.
+For local simulator checks, the debug build registers an emulator-only
+`com.weartak.companion.SIMULATE_WATCH_POINT` broadcast while the plugin is
+loaded. With BLE mode selected, send it using
+`adb -s emulator-5554 shell am broadcast -a com.weartak.companion.SIMULATE_WATCH_POINT -p com.atakmap.app.civ`.
+It imports a synthetic `SIMULATOR-WATCH-POINT` through the real CoT bridge and
+logs whether the marker appears and the UI remains responsive. Keep the emulator
+offline during this test so synthetic CoT is not sent to a TAK server.
+Release builds contain no injection receiver; physical debug phones also reject it.
+The same debug-only receiver accepts `com.weartak.companion.SIMULATE_WATCH_CHAT`,
+`com.weartak.companion.SIMULATE_WATCH_ALERT`, and
+`com.weartak.companion.SIMULATE_WATCH_CANCEL`. These exercise offline All Chat Rooms
+submission and synthetic alert/cancel import. The receiver refuses injection unless
+the emulator's Wi-Fi and mobile-data settings are both off. After an alert test,
+always send CANCEL. UI heartbeat logs alone do not establish successful dispatch;
+check the CoT bridge and ATAK chat/emergency logs as well. These checks do not test
+BLE delivery, direct TAKX addressing, or server delivery.
+Single-watch points retain their selected coordinates even when using the phone's
+identity; malformed or partial coordinates are rejected, not replaced with the
+phone location. Legacy points without coordinates use the phone fix. Titles are
+XML-escaped. Watch alerts retain their event UID for cancellation but link to the
+phone's self UID in single-watch mode; alert and cancel use the phone callsign.
+Incoming phone alert/cancel CoT is preserved for the watch's emergency ingestion,
+which feeds its map and Bloodhound targets. Point deletion remains revision- and
+session-scoped; it does not broadcast a network-wide deletion.
+For installed-state UI previews only, a debug build on a `ranchu`/`goldfish`
+emulator can treat Samsung Wearable as installed when the ATAK host's private
+`files/weartak-preview-samsung-installed` file exists. Enable with
+`adb -s emulator-5554 shell run-as com.atakmap.app.civ touch files/weartak-preview-samsung-installed`;
+disable with the same command using `rm` instead of `touch`, then reopen the pane.
+The marker survives restarts and APK updates, but has no effect in release builds
+or on physical phones. It does not simulate watch readiness or pairing.
+Open displays an explicit preview notice if the real companion app is absent.
+Garmin likewise offers **Open** to launch Garmin Connect when installed but no
+watch is connected; its connected-state Retry action is unchanged.
+The Garmin connection helper text is hidden in all connection states.
+**WearTAK Settings** prioritizes **Use WearTAK with this phone**: managed identity
+is read-only and uses the phone's callsign, team, and role. Bond Single Watch
+requests phone management after a fresh complete watch snapshot, even when the
+watch reports `phoneManagedSettings:false` (including after a deliberate release).
+This applies to BLE, Samsung Wearable, and Garmin; reported watch state does not
+override the selected purpose. Configure Single Watch remains unmanaged and
+Gateway never provisions settings. BLE and Samsung distinguish transport readiness
+from management confirmation: **CONNECTED - SYNCING** remains visible until a
+successful settings acknowledgement is followed by a complete snapshot reporting
+phone management enabled. Snapshot requests and identical settings writes each
+have up to three attempts, ten seconds apart. Exhaustion or rejection shows
+**CONNECTED - SYNC FAILED**; refreshing settings or reconnecting retries.
+Disconnect, intentional unlock, and route changes cancel pending retries.
+Garmin retains its existing transaction flow. Reporting interval remains configurable.
+BLE and Samsung place server/P12 editing in a collapsed **Standalone Setup**
+section. Expanding it does not change the saved mode or send anything. For
+independent provisioning, select Configure Single Watch, send the settings, and
+wait for the watch's save confirmation before disconnecting. Garmin hides standalone
+setup because its current profile protocol does not provision servers or P12.
+The title-row purpose selector offers **Bond Single Watch**, **Configure Single
+Watch**, and **Multiwatch Gateway**, in that order. Bond Single Watch keeps the
+existing phone-managed profile behavior and has no settings gear. Configure
+Single Watch exposes server/P12 editing; BLE places a ready-gated settings
+gear beside each watch's **Connect/Disconnect** action rather than a
+status-row gear. Samsung retains its ready-gated settings gear;
+purpose selection itself sends nothing. Configure suppresses automatic
+managed-profile sends and requires BLE or Samsung Wearable; switch away from
+Garmin before choosing it. The purpose is saved on the phone. Gateway never
+provisions a watch; single-watch profile changes keep their existing flows.
+Samsung Wearable shows a compact status and
+adjacent Connect/Disconnect action instead of discovery explanations. Statuses are
+**Not Found**, **Found** (known bond, not an active ATAK session), **Connecting**,
+**Connected** (transport ready), and **Paused**. Disconnect pauses ATAK's separate
+WearTAK route and cancels discovery/setup/retries; it does not remove the Android
+bond or disconnect Galaxy Wearable's own connection. The paused choice persists
+through plugin restart and mode changes until Connect is pressed. Settings remains
+available when connected. Detailed connection errors remain in ATAK logs.
+
+MULTIWATCH GATEWAY (NINE-WATCH BLE)
+
+Choose **Multiwatch Gateway** to scan for and manually connect up to **nine**
+WearTAK watches. The limit is a software admission cap, not a promise that every
+phone can maintain nine simultaneous GATT connections. Advertisements are
+deduplicated by BLE address; newly found watches are never auto-admitted. Only a
+previously services-ready bonded address can resume automatically. Connected,
+Gateway-ready watches stay at the top of the list in stable order. Disconnect
+cancels only that peer's GATT session and retries; Remove also forgets its
+Gateway admission. A bonded watch that lacks the Gateway v1 handshake shows an
+unsupported-watch error and is not used for routing.
+
+Gateway requires a WearOS WearTAK build containing the WEARTAK-154 Gateway v1
+session protocol and **Use WearTAK Companion** enabled on each watch. Older
+watch builds do not support Gateway negotiation; the companion-only TPP
+source ZIP does not include the required watch update.
+
+Gateway switches any prior BLE, Samsung, or Garmin route off before starting
+BLE. Pairing Mode is locked and dimmed at BLE while Gateway is selected. There
+is no Gateway settings gear or profile provisioning. The watch keeps only its
+existing **Use WearTAK Companion** on/off control; its UID, callsign, team,
+role, reporting interval, server list, certificates, and phone-management
+setting remain watch-owned and are not written by Gateway.
+
+Gateway v1 negotiates a fresh session for each ready BLE peer and carries only
+validated CoT up to 32 KiB. Supported traffic is ATAK map points accepted by
+the existing phone marker policy, `a-f-G-U-C`/`a-f-G-E` user positions and
+their subtypes, WearTAK emergency CoT (`b-a-o`, `b-a-o-*`, and `b-a-g`), and
+GeoChat (`b-t-f`) with explicit recipient metadata. Phone and watch identities
+are retained: each watch PLI uses that watch's own UID and current identity;
+other users' PLI and map points retain their original CoT. Unsupported CoT,
+profile/settings messages, Bloodhound commands, and watch-control payloads are
+not relayed.
+
+Direct/group chats are delivered only to listed recipient UIDs; **All Chat
+Rooms** is the explicit broadcast path. Alert and cancellation CoT is routed
+to the phone and connected Gateway peers. Watch-origin event IDs, chat
+message IDs, and per-peer recent revisions suppress echoes and duplicate
+delivery. The phone uses bounded per-peer coalescing queues and paced BLE
+handoff; full queues report backpressure instead of switching to an unsafe
+route. The watch validates the session, supported CoT type, chat recipient,
+and its own negotiated identity before importing positions, points, alerts,
+or chats. Session and duplicate ledgers are transient and clear on disconnect.
+
+Gateway pairing/retry preferences are separate from traditional single-watch
+preferences (`wtk_gateway_v1`, `wtk_gateway_retry_<address>`, and
+`wtk_gateway_pair_<address>`). Existing traditional reconnect policy still
+targets only the exact previously ready bonded peer. Switching purpose stops
+old transports, retries, listeners, and callbacks before the new route starts.
+No physical-watch acceptance or TAK-server delivery is claimed by JVM/build
+validation.
 
 An Android Bluetooth bond is stored pairing/trust, not an active WearTAK GATT
 session. Galaxy Wearable reconnecting its own watch connection does not establish
@@ -74,7 +237,7 @@ no new Garmin reconnect behavior, is added.
 Validation uses JVM scheduler/preferences seams plus the existing transport,
 session, chat, point/alert/settings, Bloodhound, and Garmin tests. These are not BLE
 hardware acceptance. Still verify watch app close/restart/out-of-range, Bluetooth
-OFF/ON, manual Disconnect, persisted OFF/ON, new peer selection/unpair, mode switches,
+OFF/ON, manual Disconnect across plugin restart, new peer selection/unpair, mode switches,
 and repeated plugin stop/start on paired hardware; ensure no old-session payloads
 arrive. SDK 36 and local ATAK 5.5.1.8 `main.jar` support offline Java/resource checks;
 the declared ATAK 5.8 target cannot be SDK-validated here because its SDK is not
@@ -199,15 +362,29 @@ operation is not a watch delivery acknowledgement.
 
 SETTINGS AND P12 PROVISIONING (WEARTAK-90)
 
-By default, connecting or refreshing only reads watch settings. Edit the watch
+This section applies to Bond Single Watch/Configure Single Watch, not Gateway.
+An independent watch profile can be provisioned with Configure Single Watch
+before using Gateway, or directly on the watch; Gateway itself never reads or
+writes its settings. Edit the watch
 callsign and server settings, choose the server's P12 file/password if needed,
 then tap Send to Watch. Wait for the successful save acknowledgement before
 disconnecting. Uploaded credentials stay on the watch and watch settings remain
 editable; one-time provisioning does not replace its team or role.
 
-Manage watch settings from this phone is an explicit opt-in. It copies phone
-identity, syncs on reconnect, and keeps managed watch settings locked even while
-temporarily disconnected. Uncheck it and send again to release management while
+Use WearTAK with this phone defaults to managed use for profiles without a saved
+flag; explicit saved watch values are preserved. Managed use copies phone
+identity and syncs on reconnect. With heartbeat-capable watch firmware, the editing lock
+lasts only while the managed session is responsive (with a 30-second grace period).
+Traditional single-watch BLE answers versioned, session-fenced management heartbeats;
+Gateway, Garmin, and Samsung routes do not participate. If ATAK exits/crashes or the link
+stalls, local watch edits unlock without deleting servers, certificates, or the saved
+management opt-in. A fresh managed-settings handshake restores the lock on reconnect.
+Update both watch and Companion together; older Companion builds cannot renew this lock.
+Android 6/API 23 remains supported through core-library desugaring. Passive GNSS
+status/measurement diagnostics require API 24 or later; older phones report that
+support as unavailable without registering unsupported callbacks. BLE permission
+denial is reported rather than allowed to escape from transport callbacks.
+Uncheck it and send again to release management while
 retaining saved certificates and current reporting settings. Unpairing also
 releases management, but restores the pre-management reporting settings.
 
@@ -237,6 +414,10 @@ _________________________________________________________________
 REPOSITORIES
 
 The TAK Forge repository is canonical; GitHub is secondary.
+The canonical `develop` pipeline can publish signed CIV builds to a stable
+GitHub release. See
+[docs/github-release-publishing.md](docs/github-release-publishing.md) for the
+protected-token setup and publication behavior.
 
 _________________________________________________________________
 PORTS REQUIRED
@@ -252,29 +433,27 @@ EQUIPMENT SUPPORTED
 _________________________________________________________________
 COMPILATION
 
-This branch targets ATAK 5.8.0 (plugin-api com.atakmap.app@5.8.0.CIV for
+Plugin version 5.6.0 targets ATAK 5.6.0 (plugin-api com.atakmap.app@5.6.0.CIV for
 the CIV variant). Use JDK 17 to run Gradle 8.14.3 with Android Gradle Plugin
 8.13.2, Android SDK platform 36, compile/target SDK 36, and minimum SDK 23.
 Java source and bytecode compatibility remain Java 8.
 
 TPP should configure its authenticated takrepo.url/user/password in
 local.properties or Gradle properties. The repository resolves takdev 3.+;
-an offline/local takdev.plugin JAR must be version 3.5.3 or newer and paired
-with the ATAK 5.8 SDK. Do not use a 5.5/5.6 SDK to validate 5.8 compatibility.
-This plugin has no native sources, so no NDK installation is required;
-if native compilation is added, ATAK 5.8 requires NDK 27.3.13750724.
+an offline/local takdev.plugin JAR must be paired with the ATAK 5.6 SDK.
+This plugin has no native sources, so no NDK installation is required.
 ATAK-provided core AndroidX libraries remain excluded from implementation;
-dependency alignment follows ATAK 5.8 (core 1.17.0 except core-viewtree,
-lifecycle 2.10.0, fragment 1.8.9).
+dependency overrides retain core 1.17.0 except core-viewtree,
+lifecycle 2.10.0, and fragment 1.8.9.
 
 Run gradlew.bat :app:testCivDebugUnitTest :app:assembleCivDebug, then
 gradlew.bat :app:lintCivRelease :app:assembleCivRelease for release validation.
 An archive is source only, not a verified APK or TPP-signed package.
-ATAK 5.8 API/build and phone behavior require the matching SDK/repository
-and device testing; local tests against an older SDK do not establish them.
+ATAK 5.6 release compatibility and phone behavior require the matching
+SDK/repository and device testing.
 
 Production CIV debug resource-link/Java compilation and JVM reconciliation tests
-are described below. These local checks do not establish ATAK 5.8 compatibility
+are described below. These local checks do not establish device compatibility
 or release packaging/signing.
 
 _________________________________________________________________
@@ -404,8 +583,8 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 The production CIV debug resource-link/Java compile and all 124 JVM tests pass
 (zero failures/errors, including 11 Garmin chat/handshake regressions)
-against that installed SDK, not ATAK 5.8 APIs. The configured ATAK target remains
-5.8.0; its remote SDK tuple is unavailable offline. Full target-SDK compatibility,
+against that installed SDK. Those historical checks predate the current
+ATAK 5.6.0 target. Full target-SDK compatibility,
 APK packaging/signing and device acceptance still require the matching TAK SDK
 and TPP environment. No SDK, credentials, signing keys or local.properties are
 included.
@@ -419,6 +598,56 @@ point update/delete and Bloodhound tests after mode switches/reconnect. On Garmi
 verify direct/broadcast inbox/replies, false group capability and rejection of
 named groups without fallback, handoff-only status, SDK retry, and entity snapshots.
 Confirm a third TAK peer receives no deletion from either watch transport.
+
+### Garmin route display and point tracking
+
+The Garmin adapter exports ATAK `b-m-r` routes as versioned atomic `route`
+messages. Watches opt in with numeric `routeVersion: 1` in `relay_hello` or
+`entity_sync_request`; older watches receive no route messages. A new capable
+link or explicit refresh sends `routes_reset` before replay. Geometry, route
+metadata, additions and removals are observed while Garmin mode is active.
+Teardown removes those listeners; updates cannot cross transport generations.
+Queued changes reconcile against the current authoritative map snapshot, so
+delayed work cannot restore deleted geometry; recreation publishes only the
+current revision. Invalid geometry is preserved only for its originating map
+item, never another server's route with the same UID.
+
+Routes retain source server ID and route UID separately. Each message contains
+the route name, ordered latitude/longitude vertices with optional names, and
+optional mission name/sender UID. Limits match the watch: 8 routes, 2–64 vertices
+per route, 128 vertices total, and 6,000 UTF-8 bytes per serialized envelope.
+Text limits in UTF-8 bytes are server ID 64, UID 128, route/point name 64,
+mission/sender UID 128, and error 256. Invalid or oversized updates preserve the
+last valid geometry and report `routes_error`; capacity omissions also report
+an error once per continuous capacity condition (and again after explicit refresh).
+Rejected warning handoffs retry on the next reconciliation. Routes are never
+silently simplified. Removal sends `route_remove`
+for that source/UID only. Freed route/vertex capacity is filled automatically
+after removal or shrinking geometry, retaining published routes first and
+selecting new candidates in source-server/UID order. Immediately rejected SDK
+updates and removals retain retry state for the next map/link reconciliation;
+ordinary reconciliation does not reset watch-local route tracking. No raw route
+XML is logged.
+
+On Garmin, **Map > Layers > Routes** lists every vertex and exposes point
+details and local Bloodhound range/bearing/proximity alerts. Overlapping map
+points use the existing selection menu. Route tracking is local to the watch:
+synthetic vertex identities are not sent to native ATAK Bloodhound, which still
+requires an existing point map item. Ordinary-point synchronized Bloodhound
+is unchanged. Refresh resets route tracking and repairs a missed SDK handoff;
+there are no end-to-end delivery acknowledgements.
+
+Focused checks: `GarminRouteProtocolTest`, `GarminRouteForwarderTest`,
+`GarminRouteSourceCacheTest`, existing
+Garmin Connect IQ/entity forwarding tests and `BloodhoundSyncTest`. Production
+Java compilation uses the locally available ATAK SDK. The debug-only emulator
+action `com.weartak.companion.SIMULATE_GARMIN_ROUTES` requires Wi-Fi and mobile data
+disabled and exercises native ATAK route addition, ordered coordinates, geometry
+edits, renaming, removal and listener teardown using the production route source
+and an in-memory watch link. Android XML parsing rejects DTD/entity declarations
+and external resolution without requiring unsupported desktop JAXP feature flags.
+Native observation is simulator-verified; target-SDK packaging and physical
+Garmin/ATAK delivery remain acceptance requirements.
 
 ### WEARTAK-128: Garmin Bloodhound synchronization
 
@@ -514,9 +743,9 @@ system-pairing watch version (wearos-tak-civ-samsung-system-pairing,
 commit 9a90f83 or its successors). A TPP-signed Companion plugin cannot
 update or replace the watch app. The Companion source ZIP is for TPP
 build/signing and testing, not certification or a directly installable APK.
-Build configuration now targets ATAK 5.8.0; this source supersedes the
-50a0081 source package for ATAK 5.8 builds. Behavior on the requested
-ATAK 5.8 phone is not proven by local compilation/unit tests.
+Build configuration and plugin version now target ATAK 5.6.0.
+Behavior on the requested ATAK 5.8 phone is not established by this 5.6 target
+or by local compilation/unit tests.
 TPP must provide its normal TAK SDK/build credentials; no local SDK,
 local.properties, generated outputs, or signing key is included.
 Paired BLE Bloodhound synchronization (WEARTAK-78)
@@ -691,3 +920,48 @@ without echo deletion or startup replay. These are pending hardware acceptance
 checks, not claims of device validation. With a third TAK/network peer displaying
 the same point, delete on either paired device and verify that third peer retains
 its copy and receives no deletion packet.
+
+CHAT ECHO SUPPRESSION (WEARTAK-158)
+
+In single-watch purpose (Traditional BLE, Samsung Wearable, or Garmin Connect IQ),
+the plugin records the exact CoT identity of chats sent through the watch's
+`sendChat` path. Its incoming wrapper drops only an exact matching `b-t-f` echo
+before `GeoChatService` can store it, mark it unread, or notify. Direct, group,
+and All Chat Rooms sends share this path; new messages, ordinary phone sends,
+and delivery/read receipts are forwarded unchanged. Matching is bounded to 256
+identities and ten minutes and fails open if the server changes the CoT identity.
+Gateway purpose is not intercepted.
+
+The debug emulator diagnostics exercise the production filter. With emulator
+Wi-Fi and mobile data disabled, send the
+`com.weartak.companion.SIMULATE_CHAT_ECHO_TEST` broadcast. It sends an offline watch
+chat, replays two exact copies through ATAK's receive path, checks sent history and
+unread count, then injects a new message from another sender and checks that unread
+count increases. It also checks that an ordinary phone send is not filtered and
+that chat still works after stopping and restarting the filter. Keep the chat
+conversation closed to verify its notification.
+
+The plugin uses ATAK 5.6's public listener registration methods; it does not modify
+ATAK core or global notification preferences. On plugin stop or when switching to
+Gateway purpose, it removes the wrapper and restores the original
+`GeoChatService` listener. Failed installation rolls back to the original listener
+and logs that watch echoes may notify ATAK.
+
+**Known lifecycle risk:** ATAK exposes no atomic listener replacement or selective
+notification veto. The public remove/add operations are separate; an incoming chat
+at that transition can be missed. This is minimized by doing the swap synchronously
+on plugin lifecycle transitions, but cannot be eliminated through the plugin API.
+The exact filter has simulator and unit coverage; direct/group echo behavior with
+real ATAK servers, plugin lifecycle transitions under live traffic, and BLE/Garmin
+hardware delivery still require paired-device acceptance. The simulator broadcast
+and observer are debug-only; the production filter is included in release builds.
+
+## WEARTAK-158 / 160 / 161 release candidate
+
+This candidate combines selective watch-chat echo suppression, remote TAK user
+map relay, and acknowledged release of phone-managed watch settings on intentional
+disconnect. The chat wrapper uses ATAK's public listener API and has a small,
+non-atomic listener replacement window. Emulator-only debug checks cover chat
+listener lifecycle, synthetic remote-user snapshots and updates, and release
+state-machine acknowledgements; they do not replace paired-watch interoperability
+testing. Unlock requires watch firmware that supports `release_phone_management`.

@@ -16,6 +16,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     public interface Listener {
         void onConnectClicked(WearTakBleClient.DiscoveredDevice device);
+        void onDisconnectClicked();
         void onSettingsClicked(WearTakBleClient.DiscoveredDevice device);
     }
 
@@ -24,6 +25,8 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     private String connectingAddress = null;
     private String connectedAddress = null;
+    private boolean settingsVisible;
+    private boolean disconnectPending;
 
     public BleDeviceAdapter(Listener listener) {
         this.listener = listener;
@@ -52,6 +55,16 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
         notifyDataSetChanged();
     }
 
+    public void setSettingsVisible(boolean visible) {
+        settingsVisible = visible;
+        notifyDataSetChanged();
+    }
+
+    public void setDisconnectPending(boolean pending) {
+        disconnectPending = pending;
+        notifyDataSetChanged();
+    }
+
     @NonNull
     @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -73,13 +86,19 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
         boolean isConnecting = d.address != null && d.address.equals(connectingAddress);
 
         h.actionButton.setOnClickListener(null);
+        h.settingsButton.setVisibility(settingsVisible ? View.VISIBLE : View.GONE);
+        h.settingsButton.setEnabled(isConnected);
+        h.settingsButton.setAlpha(isConnected ? 1f : 0.4f);
+        h.settingsButton.setOnClickListener(v -> {
+            if (listener != null && isConnected) listener.onSettingsClicked(d);
+        });
 
         if (isConnected) {
-            h.deviceState.setText("Connected");
-            h.actionButton.setText("Settings");
-            h.actionButton.setEnabled(true);
+            h.deviceState.setText(disconnectPending ? "Confirming unlock…" : "Connected");
+            h.actionButton.setText(disconnectPending ? "Wait" : "Disconnect");
+            h.actionButton.setEnabled(!disconnectPending);
             h.actionButton.setOnClickListener(v -> {
-                if (listener != null) listener.onSettingsClicked(d);
+                if (listener != null) listener.onDisconnectClicked();
             });
         } else if (isConnecting) {
             h.deviceState.setText("Connecting…");
@@ -103,6 +122,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     static class VH extends RecyclerView.ViewHolder {
         TextView deviceName, deviceMac, rssiBadge, deviceState;
         Button actionButton;
+        View settingsButton;
 
         VH(@NonNull View itemView) {
             super(itemView);
@@ -111,6 +131,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
             rssiBadge = itemView.findViewById(R.id.rssiBadge);
             deviceState = itemView.findViewById(R.id.deviceState);
             actionButton = itemView.findViewById(R.id.actionButton);
+            settingsButton = itemView.findViewById(R.id.watchSettingsButton);
         }
     }
 }

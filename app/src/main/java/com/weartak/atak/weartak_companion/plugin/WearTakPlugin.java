@@ -3,10 +3,14 @@ package com.weartak.atak.weartak_companion.plugin;
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -16,9 +20,11 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -46,6 +52,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.BooleanSupplier;
 
 import gov.tak.api.plugin.IPlugin;
 import gov.tak.api.plugin.IServiceController;
@@ -66,27 +74,48 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile Boolean lastSettingsApplyResult = null;
 
     private WearTakBleClient bleClient;
-    private CheckBox autoReconnectCB;
     private SystemBondedWatchConnection systemBondedConnection;
     private boolean systemBondedEnabled;
     private TextView systemBondedWatchStatus;
+    private Button systemBondedConnectButton;
+    private View systemBondedSettingsButton;
+    private View bleSettingsButton;
     private GarminConnectIqClient garminClient;
     private GarminEntityForwarder garminEntities;
     private GarminMapEntitySource garminEntitySource;
+    private GarminRouteForwarder garminRoutes;
+    private GarminRouteMapSource garminRouteSource;
     private GarminEntityForwarder.Link garminSettingsLink;
     private final GarminSettingsTransaction garminSettingsTransaction = new GarminSettingsTransaction();
     private Map<String, Object> garminSettingsDraftAtSend;
     private boolean garminSettingsSnapshotLoaded;
     private volatile boolean garminEnabled;
     private Button connectionModeButton;
-    private TextView connectionModeAdvisory;
-    private Button garminSettingsButton;
+    private Button purposeButton;
+    private boolean setupPurpose;
+    private boolean gatewayPurpose;
+    private final PhoneGnssDiagnostics locationDiagnostics = new PhoneGnssDiagnostics();
+    private JSONObject watchLocationDiagnostics;
+    private MultiwatchGateway gateway;
+    private View garminSettingsButton;
     private View serverSettingsGroup;
+    private Button standaloneSetupButton;
     private final SettingsSessionGuard settingsSession = new SettingsSessionGuard();
+    private final PhoneManagementRelease managementRelease = new PhoneManagementRelease();
+    private Object releasePeer;
+    private BooleanSupplier releaseCurrent;
+    private BooleanSupplier releaseClose;
+    private Runnable releaseTimeout;
+    private static final String KEY_GARMIN_PAUSED = "garmin_connection_paused";
+    private final SimulatorDiagnostics simulatorDiagnostics = new SimulatorDiagnostics();
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
+                    stopLocationDiagnostics("connection route stopped");
+                    failManagementRelease("The route stopped before unlock was confirmed.");
                     ++scanSessionCount;
+                    if (gateway != null) gateway.stop();
+                    gateway = null;
                     systemBondedEnabled = garminEnabled = false;
                     garminSettingsTransaction.cancel();
                     garminSettingsLink = null;
@@ -94,6 +123,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (garminEntities != null) garminEntities.close();
                     garminEntities = null;
                     garminEntitySource = null;
+                    if (garminRoutes != null) garminRoutes.close();
+                    garminRoutes = null;
+                    garminRouteSource = null;
                     if (bloodhoundBridge != null) {
                         bloodhoundBridge.close();
                         bloodhoundBridge = null;
@@ -131,6 +163,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
+    private PhoneUserMapRelay phoneUserRelay;
+    private WatchChatEchoSuppressor chatEchoSuppressor;
     private CotServiceRemote cotServiceRemote;
     private final PhoneEmergencyRelay phoneEmergencyRelay = new PhoneEmergencyRelay();
     private final BroadcastReceiver phoneEmergencyReceiver = new BroadcastReceiver() {
@@ -163,6 +197,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // Device screen
     private TextView connectionStatusTV;
+    private TextView locationDiagnosticsStatus;
     private TextView garminConnectionStatusTV;
     private TextView garminConnectionBadgeTV;
     private Button garminToggleButton;
@@ -210,21 +245,26 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private List<TakServerItem> currentServerList = new ArrayList<>();
     private int currentSelectedServerIndex = -1;
     private volatile boolean phoneSettingsPushedThisConnection;
-    private boolean phoneManagedSettingsRequested;
+    private boolean phoneManagedSettingsRequested = true;
     private boolean settingsModeLoadedThisConnection;
+    private final PhoneSettingsHandshake phoneSettingsHandshake = new PhoneSettingsHandshake();
+    private Runnable phoneSettingsTimeout;
+    private String phoneSettingsRetryJson;
 
     // Connection state
     private String currentConnectedAddress = null;
     private View connectedCardView = null;
 
     // Strings (keep literal for now; you can move to strings.xml later)
-    private static final String SCAN_TEXT_DEFAULT = "Scan for WearTAK Devices";
-    private static final String SCAN_TEXT_REFRESH = "Scan again to refresh devices";
+    private static final String SCAN_TEXT_DEFAULT = "Scan";
     private static final String PREFS_NAME = "weartak_companion_prefs";
     private static final String KEY_PREF_ADDR = "preferred_device_address";
     private static final String KEY_PREF_NAME = "preferred_device_name";
     private static final String KEY_PREF_SET_AT = "preferred_device_set_at_ms";
     private static final String KEY_SYSTEM_BONDED_ENABLED = "use_system_bonded_watch";
+    private static final String KEY_WEARABLE_PAUSED = "wearable_connection_paused";
+    private static final String SAMSUNG_WEARABLE_PACKAGE = "com.samsung.android.app.watchmanager";
+    private static final String GARMIN_CONNECT_PACKAGE = "com.garmin.android.apps.connectmobile";
     private static final String NO_P12_SELECTED = "No certificate selected.";
     private static final String WATCH_P12_SELECTED = "Certificate loaded from watch sync.";
 
@@ -233,6 +273,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void showConnectedCard(WearTakBleClient.DiscoveredDevice d) {
         if (paneView == null) return;
         if (d == null) return;
+        if (connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) return;
 
         // already shown -> just rebind
         if (connectedCardView != null) {
@@ -241,16 +282,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         ViewGroup deviceRoot = paneView.findViewById(R.id.deviceScreenRoot);
-        Button scanBtn = paneView.findViewById(R.id.scanButton);
-        if (deviceRoot == null || scanBtn == null) return;
+        View statusRow = paneView.findViewById(R.id.bleStatusRow);
+        if (deviceRoot == null || statusRow == null) return;
 
-        int scanIndex = deviceRoot.indexOfChild(scanBtn);
+        int scanIndex = deviceRoot.indexOfChild(statusRow) + 1;
         if (scanIndex < 0) scanIndex = 0;
 
         connectedCardView = LayoutInflater.from(deviceRoot.getContext())
                 .inflate(R.layout.item_ble_device, deviceRoot, false);
 
-        // Insert above Scan button
+        // Keep the pairing selector and status controls above the connected device.
         deviceRoot.addView(connectedCardView, scanIndex);
 
         bindConnectedCard(connectedCardView, d);
@@ -266,24 +307,33 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         Button disconnect = card.findViewById(R.id.disconnectButton);
         Button action = card.findViewById(R.id.actionButton);
+        View settings = card.findViewById(R.id.watchSettingsButton);
 
         // Defensive: if you haven't updated item_ble_device.xml yet,
         // disconnectButton may not exist. Fail softly.
         if (name != null) name.setText((d.name != null && !d.name.isEmpty()) ? d.name : "Unknown");
         if (mac != null) mac.setText(d.address != null ? d.address : "—");
         if (rssi != null) rssi.setText(""); // avoid stale RSSI; can show last known if you want
-        if (state != null) state.setText("Connected");
+        if (state != null) state.setText(managementRelease.isPending()
+                ? "Confirming unlock…" : singleWatchConnectionStatus());
 
         if (disconnect != null) {
-            disconnect.setVisibility(View.VISIBLE);
+            disconnect.setVisibility(View.GONE);
             disconnect.setEnabled(true);
             disconnect.setOnClickListener(v -> onDisconnectClicked());
         }
 
         if (action != null) {
-            action.setText("Settings");
-            action.setEnabled(true);
-            action.setOnClickListener(v -> {
+            action.setVisibility(setupPurpose ? View.VISIBLE : View.GONE);
+            action.setText(managementRelease.isPending() ? "Wait" : "Disconnect");
+            action.setEnabled(!managementRelease.isPending());
+            action.setOnClickListener(v -> onDisconnectClicked());
+        }
+        if (settings != null) {
+            settings.setVisibility(setupPurpose ? View.VISIBLE : View.GONE);
+            settings.setEnabled(bleClient != null && bleClient.isConnected());
+            settings.setAlpha(settings.isEnabled() ? 1f : 0.4f);
+            settings.setOnClickListener(v -> {
                 if (bleClient == null || !bleClient.isConnected()) return;
                 selectedDevice = d;
                 showSettingsScreen();
@@ -307,15 +357,156 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void onDisconnectClicked() {
-        if (bleClient == null) return;
+        requestBleManagementRelease();
+    }
 
-        disableSystemBondedForManualUse();
-        clearSessionSettings();
-        ++scanSessionCount;
+    private void releaseNotice(String message) {
+        Log.i(TAG, message);
+        if (settingsStatusTV != null) settingsStatusTV.setText(message);
+        Toast.makeText(MapView.getMapView().getContext(), message, Toast.LENGTH_LONG).show();
+    }
+
+    private void clearManagementRelease() {
+        managementRelease.cancel();
+        if (releaseTimeout != null) mainHandler.removeCallbacks(releaseTimeout);
+        releaseTimeout = null;
+        releasePeer = null;
+        releaseCurrent = releaseClose = null;
+        updateManagementReleaseUi();
+    }
+
+    private void updateManagementReleaseUi() {
+        updateSettingsSendState();
+        updateConnectionModeUi();
+        updateSystemBondedControl();
+        if (deviceAdapter != null) deviceAdapter.setDisconnectPending(managementRelease.isPending());
+    }
+
+    private void failManagementRelease(String reason) {
+        if (!managementRelease.isPending()) return;
+        clearManagementRelease();
+        releaseNotice("Cannot confirm watch settings unlock. " + reason
+                + " Watch may remain locked; reconnect or retry Disconnect.");
+    }
+
+    private String beginManagementRelease(Object peer, BooleanSupplier current,
+            BooleanSupplier close) {
+        if (managementRelease.isPending()) {
+            releaseNotice("Waiting for watch unlock confirmation; the route has not been disconnected.");
+            return null;
+        }
+        String id = UUID.randomUUID().toString();
+        cancelPhoneSettingsHandshake();
+        long attempt = managementRelease.begin(peer, id, SystemClock.elapsedRealtime());
+        releasePeer = peer;
+        releaseCurrent = current;
+        releaseClose = close;
+        releaseTimeout = () -> {
+            if (managementRelease.token() != attempt || !managementRelease.isPending()) return;
+            // Preserve the pending state until failManagementRelease reports the failure.
+            failManagementRelease(current.getAsBoolean()
+                    ? "No acknowledgement received (watch may need an update). Route left connected."
+                    : "The original watch session is no longer ready.");
+        };
+        mainHandler.postDelayed(releaseTimeout, PhoneManagementRelease.TIMEOUT_MILLIS);
+        updateManagementReleaseUi();
+        releaseNotice("Requesting watch settings unlock before disconnecting…");
+        return id;
+    }
+
+    private void requestBleManagementRelease() {
+        WearTakBleClient owner = bleClient;
+        long session = owner == null ? -1 : owner.getReadySession();
+        if (session < 0 || gatewayPurpose) {
+            releaseNotice("Cannot confirm watch settings unlock: no ready single-watch link. "
+                    + "The watch may remain locked until reconnected or unpaired on the watch.");
+            return;
+        }
+        Object peer = new Object();
+        SystemBondedWatchConnection samsung = systemBondedConnection;
+        boolean isSamsung = connectionModes.getMode() == ConnectionModeController.Mode.SAMSUNG;
+        String id = beginManagementRelease(peer,
+                () -> bleClient == owner && owner.getReadySession() == session,
+                () -> {
+                    if (!owner.disconnectReadySession(session)) return false;
+                    if (isSamsung && samsung != null) {
+                        systemBondedPreferences().edit().putBoolean(KEY_WEARABLE_PAUSED, true).apply();
+                        samsung.pause();
+                    }
+                    clearSessionSettings();
+                    ++scanSessionCount;
+                    return true;
+                });
+        if (id == null) return;
         try {
-            bleClient.disconnect();
-        } catch (Throwable t) {
-            Log.w(TAG, "Disconnect failed (check WearTakBleClient API)", t);
+            JSONObject payload = new JSONObject().put("requestId", id);
+            String command = new JSONObject().put("msg_type", PhoneManagementRelease.COMMAND)
+                    .put("payload", payload).toString();
+            if (!owner.writeJsonLineToWatch(command, session)) {
+                failManagementRelease("Could not send release; route left connected.");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Could not encode management release", e);
+            failManagementRelease("Could not encode release; route left connected.");
+        }
+    }
+
+    private void requestGarminManagementRelease() {
+        refreshGarminSettingsLink();
+        GarminConnectIqClient owner = garminClient;
+        GarminEntityForwarder.Link link = garminSettingsLink;
+        if (owner == null || link == null || !link.isCurrent() || gatewayPurpose) {
+            releaseNotice("Cannot confirm watch settings unlock: exactly one ready Garmin watch "
+                    + "is required. The watch may remain locked; route not paused.");
+            return;
+        }
+        if (garminSettingsTransaction.isPending()) {
+            releaseNotice("Watch settings exchange is still pending. Wait for it to finish, "
+                    + "then retry Pause; watch unlock has not been requested.");
+            return;
+        }
+        String id = beginManagementRelease(link,
+                () -> garminClient == owner && currentGarminBloodhoundLink(owner) == link,
+                () -> {
+                    if (!owner.stopOnlyReadyLink(link)) return false;
+                    systemBondedPreferences().edit().putBoolean(KEY_GARMIN_PAUSED, true).apply();
+                    connectionModes.stop();
+                    renderGarminConnection(false);
+                    return true;
+                });
+        if (id == null) return;
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("requestId", id);
+        if (!owner.sendOnlyReadyLink(link, PhoneManagementRelease.COMMAND, payload)) {
+            failManagementRelease("Could not send release; Garmin route left connected.");
+        }
+    }
+
+    private void handleManagementReleaseAck(JSONObject payload, Object peer) {
+        if (!managementRelease.isPending() || peer != releasePeer) return;
+        if (releaseCurrent == null || !releaseCurrent.getAsBoolean()) {
+            failManagementRelease("The original watch session changed.");
+            return;
+        }
+        if (payload == null) return;
+        PhoneManagementRelease.Result result = managementRelease.acknowledge(peer,
+                payload.opt("requestId"), managementRelease.token(),
+                SystemClock.elapsedRealtime(), payload.opt("ok"));
+        if (result == PhoneManagementRelease.Result.IGNORED) return;
+        BooleanSupplier close = releaseClose;
+        clearManagementRelease();
+        if (result == PhoneManagementRelease.Result.SUCCEEDED) {
+            if (close != null && close.getAsBoolean()) {
+                releaseNotice("Watch settings unlocked; ATAK route disconnected. Settings and bond preserved.");
+            } else {
+                releaseNotice("Watch acknowledged unlock, but the original link changed; "
+                        + "no replacement link was disconnected. Verify watch settings.");
+            }
+        } else {
+            releaseNotice("Cannot confirm watch settings unlock. "
+                    + (result == PhoneManagementRelease.Result.TIMED_OUT ? "Acknowledgement arrived too late."
+                    : "Watch refused release: " + payload.optString("error", "no reason supplied"))
+                    + " Route left connected; retry Disconnect.");
         }
     }
 
@@ -332,7 +523,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bleClient.connectToSelectedDevice(device);
 
         if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
-        if (connectionStatusTV != null) connectionStatusTV.setText("Connecting WearTAK watch...");
+        setConnectionStatus("Connecting WearTAK watch...");
     }
 
     // ------------------ Plugin lifecycle ------------------
@@ -375,6 +566,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
         SharedPreferences prefs = systemBondedPreferences();
+        setupPurpose = prefs.getBoolean("setup_purpose", false);
+        gatewayPurpose = "gateway".equals(prefs.getString("purpose", ""));
+        if (gatewayPurpose) setupPurpose = false;
         String saved = prefs.getString("connection_mode", null);
         if (saved == null) {
             saved = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -382,11 +576,43 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
         ConnectionModeController.Mode mode = ConnectionModeController.restore(saved,
                 prefs.getBoolean(KEY_SYSTEM_BONDED_ENABLED, false));
+        if (gatewayPurpose) mode = ConnectionModeController.Mode.TRADITIONAL;
         persistConnectionMode(mode);
-        connectionModes.start(mode);
+        configureWatchChatEchoSuppression(!gatewayPurpose);
+        connectionModes.start(mode, gatewayPurpose);
+        simulatorDiagnostics.start(MapView.getMapView(), bleCotBridge, chatEchoSuppressor);
+    }
+
+    private void configureWatchChatEchoSuppression(boolean enabled) {
+        if (bleCotBridge == null) return;
+        if (!enabled) {
+            try {
+                if (chatEchoSuppressor != null) chatEchoSuppressor.stop();
+            } catch (RuntimeException e) {
+                Log.e(TAG, "Could not restore ATAK chat listener cleanly", e);
+            } finally {
+                bleCotBridge.setWatchChatSend(Runnable::run);
+            }
+            return;
+        }
+        try {
+            if (chatEchoSuppressor == null) chatEchoSuppressor = new WatchChatEchoSuppressor();
+            chatEchoSuppressor.start();
+            bleCotBridge.setWatchChatSend(chatEchoSuppressor::send);
+        } catch (RuntimeException e) {
+            bleCotBridge.setWatchChatSend(Runnable::run);
+            Log.e(TAG, "Could not install watch chat echo suppression; watch echoes may notify ATAK", e);
+        }
     }
 
     private void initializeBleTransport(final long token) {
+        if (gatewayPurpose) {
+            gateway = new MultiwatchGateway(pluginContext, bleCotBridge);
+            gateway.start();
+            if (paneView != null) gateway.bind(paneView.findViewById(R.id.gatewayPanel));
+            startPhoneAlertForwarding(token);
+            return;
+        }
         systemBondedEnabled = connectionModes.getMode() == ConnectionModeController.Mode.SAMSUNG;
         if (bleClient == null) {
             bleClient = new WearTakBleClient(pluginContext, null);
@@ -394,13 +620,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bleClient.setStatusListener(connected -> {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
+                    if (!connected) failManagementRelease("Watch disconnected before acknowledgement.");
+                    if (!connected) stopLocationDiagnostics("watch disconnected");
+                    if (!connected && bleCotBridge != null) bleCotBridge.discardPendingCot();
+                    if (!connected && phoneUserRelay != null) phoneUserRelay.disconnected();
                     if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
                     BloodhoundBridge bridge = bloodhoundBridge;
                     if (!connected && bridge != null) bridge.disconnected();
                     if (connectionStatusTV != null) {
-                        connectionStatusTV.setText(connected ? "CONNECTED"
+                        setConnectionStatus(connected ? "CONNECTED"
                                 : systemBondedConnection != null && systemBondedConnection.isActive()
-                                ? systemBondedConnection.getStatus() : "DISCONNECTED");
+                                ? systemBondedConnection.getStatus() : "NOT CONNECTED");
                     }
 
                     if (connected) {
@@ -436,6 +666,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
 
                     refreshDeviceListUi();
+                    updateConnectionModeUi();
                     updateSystemBondedControl();
                 });
             });
@@ -455,26 +686,61 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         bleClient.setJsonListener(new WearTakBleClient.JsonListener() {
             @Override
+            public void onBluetoothStateChanged(boolean available) {
+                runOnMain(() -> {
+                    if (!connectionModes.isCurrent(token)) return;
+                    if (systemBondedConnection != null) {
+                        systemBondedConnection.onBluetoothStateChanged(available);
+                    }
+                    updateSystemBondedControl();
+                });
+            }
+
+            @Override
             public void onReady() {
                 Log.i(TAG, "BLE READY");
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!bleClient.isConnected()) return;
-                    if (connectionStatusTV != null) connectionStatusTV.setText("CONNECTED (READY)");
                     phoneSettingsPushedThisConnection = false;
                     settingsModeLoadedThisConnection = false;
-                    requestSettingsFromWatch("onReady");
+                    if (!setupPurpose && phoneManagedSettingsRequested) {
+                        startPhoneSettingsHandshake();
+                    } else {
+                        setConnectionStatus("CONNECTED");
+                        requestSettingsFromWatch("onReady");
+                    }
                 });
             }
 
             @Override
             public void onJson(String jsonLine) {
                 final long settingsToken = settingsSession.token();
+                final WearTakBleClient incomingOwner = bleClient;
+                final long incomingSession = incomingOwner == null ? -1 : incomingOwner.getReadySession();
                 runOnMain(() -> {
                 if (!connectionModes.isCurrent(token) || !settingsSession.isCurrent(settingsToken)) return;
+                if (incomingOwner == null || incomingOwner != bleClient || incomingSession < 0
+                        || incomingOwner.getReadySession() != incomingSession) return;
                 Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
                 try {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
+                    String diagnosticType = pointEnvelope.optString("msgType",
+                            pointEnvelope.optString("msg_type", ""));
+                    if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
+                            LocationDiagnosticsProtocol.STOP.equals(diagnosticType) ||
+                            LocationDiagnosticsProtocol.SNAPSHOT.equals(diagnosticType)) {
+                        handleLocationDiagnosticsEnvelope(pointEnvelope, incomingOwner, incomingSession);
+                        return;
+                    }
+                    if (PhoneManagementRelease.ACK.equals(pointEnvelope.optString("msgType",
+                            pointEnvelope.optString("msg_type", "")))) {
+                        if (incomingOwner != null && incomingOwner == bleClient && incomingSession >= 0
+                                && incomingOwner.getReadySession() == incomingSession) {
+                            handleManagementReleaseAck(pointEnvelope.optJSONObject("payload"), releasePeer);
+                        }
+                        return;
+                    }
                     if ("marker_delete".equals(pointEnvelope.optString("msg_type"))) {
                         if (phoneMarkerRelay != null) phoneMarkerRelay.receiveDeletion(jsonLine);
                         else Log.w(TAG, "Point relay unavailable for deletion");
@@ -517,8 +783,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     settingsStatusTV.setText("Settings loaded from watch.");
                                 }
                                 updatePhoneIdentityViews();
-                                if (phoneManagedSettingsRequested && !phoneSettingsPushedThisConnection) {
-                                    phoneSettingsPushedThisConnection = sendSettingsToWatch();
+                                if (phoneSettingsHandshake.isPending()) {
+                                    handlePhoneSettingsAction(phoneSettingsHandshake.snapshot(
+                                            phoneSettingsHandshake.token(),
+                                            payload.optJSONArray("takServerList") != null
+                                                    && optInt(payload, "reportIntSecs") != null,
+                                            payload.optBoolean("phoneManagedSettings", false),
+                                            SystemClock.elapsedRealtime()));
                                 }
                             });
                         }
@@ -537,6 +808,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                         ? "Settings validated and saved on watch; server connection not yet verified."
                                         : ("Watch could not apply settings: " + err));
                             }
+                            handlePhoneSettingsAction(phoneSettingsHandshake.acknowledge(
+                                    phoneSettingsHandshake.token(), ok, SystemClock.elapsedRealtime()));
                         });
                     }
 
@@ -558,12 +831,19 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 });
             }
 
-            @Override public void onPaired(String deviceId, String callsign) { }
+            @Override public void onPaired(String deviceId, String callsign) {
+                final long readySession = bleClient.getReadySession();
+                runOnMain(() -> {
+                    if (connectionModes.isCurrent(token) && phoneUserRelay != null)
+                        phoneUserRelay.ready(deviceId, readySession);
+                });
+            }
 
             @Override
             public void onTrustLost(String deviceAddress, String reason) {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
+                    stopLocationDiagnostics("watch bond lost");
                     clearPreferredDevice(deviceAddress);
                     clearSessionSettings();
                     updateSystemBondedControl();
@@ -571,7 +851,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (bridge != null) bridge.disconnected();
                     currentConnectedAddress = null;
                     hideConnectedCard();
-                    if (connectionStatusTV != null) connectionStatusTV.setText("DISCONNECTED");
+                    setConnectionStatus("NOT CONNECTED");
                     if (deviceAdapter != null) {
                         deviceAdapter.clearConnectionMarkers();
                         refreshDeviceListUi();
@@ -590,7 +870,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (systemBondedConnection != null) systemBondedConnection.onError(msg);
                     updateSystemBondedControl();
                     if (connectionStatusTV != null && !bleClient.isConnected()) {
-                        connectionStatusTV.setText(
+                        setConnectionStatus(
                                 systemBondedConnection != null && systemBondedConnection.isActive()
                                         ? systemBondedConnection.getStatus() : "BLE: " + msg);
                     }
@@ -627,10 +907,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     new SystemBondedWatchConnection.Listener() {
                         @Override public void onStatus(String message) {
                             if (!connectionModes.isCurrent(token)) return;
-                            if (systemBondedWatchStatus != null) systemBondedWatchStatus.setText(message);
-                            if (connectionStatusTV != null && systemBondedEnabled) {
-                                connectionStatusTV.setText(message);
-                            }
+                            Log.i(TAG, message);
                             updateSystemBondedControl();
                         }
                         @Override public void onConnecting(WearTakBleClient.DiscoveredDevice device) {
@@ -645,7 +922,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         }
                     });
         }
-        if (systemBondedEnabled) systemBondedConnection.start();
+        if (systemBondedEnabled) {
+            if (systemBondedPreferences().getBoolean(KEY_WEARABLE_PAUSED, false)) {
+                systemBondedConnection.pause();
+            } else {
+                systemBondedConnection.start();
+            }
+        }
         updateSystemBondedControl();
     }
 
@@ -664,6 +947,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void selectConnectionMode(ConnectionModeController.Mode mode) {
+        if (gatewayPurpose && mode != ConnectionModeController.Mode.TRADITIONAL) {
+            Toast.makeText(MapView.getMapView().getContext(),
+                    "Multiwatch Gateway requires BLE. Choose Bond Single Watch or Configure Single Watch first.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (setupPurpose && mode == ConnectionModeController.Mode.GARMIN) {
+            Toast.makeText(MapView.getMapView().getContext(),
+                    "Configure Single Watch requires BLE or Samsung Wearable.", Toast.LENGTH_LONG).show();
+            return;
+        }
         persistConnectionMode(mode);
         connectionModes.select(mode);
         updateConnectionModeUi();
@@ -672,47 +966,132 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void updateConnectionModeUi() {
         ConnectionModeController.Mode mode = connectionModes.getMode();
         if (connectionModeButton == null) return;
-        connectionModeButton.setText(mode.label);
-        connectionModeAdvisory.setText(mode == ConnectionModeController.Mode.SAMSUNG
-                ? "Samsung Wearable reuses the existing Android Bluetooth bond established via Galaxy Wearable; retries until you change mode or disconnect."
-                : mode == ConnectionModeController.Mode.GARMIN
-                ? "Requires Garmin Connect Mobile and WearTAK-Garmin with ATAK Relay enabled. Garmin profile settings sync separately; TAK servers stay on this phone."
-                : "Scan and connect manually. Existing Bluetooth bonds are preserved.");
+        connectionModeButton.setText(mode == ConnectionModeController.Mode.TRADITIONAL
+                ? "BLE" : mode == ConnectionModeController.Mode.GARMIN ? "Garmin Connect" : "Samsung Wearable");
+        connectionModeButton.setEnabled(!connectionModes.isPairingLocked());
+        connectionModeButton.setAlpha(connectionModes.isPairingLocked() ? 0.4f : 1f);
+        paneView.findViewById(R.id.gatewayScroll).setVisibility(gatewayPurpose ? View.VISIBLE : View.GONE);
+        updateLocationDiagnosticsUi();
+        if (purposeButton != null) purposeButton.setText(
+                gatewayPurpose ? "Multiwatch Gateway"
+                        : setupPurpose ? "Configure Single Watch" : "Bond Single Watch");
+        if (gatewayPurpose) {
+            paneView.findViewById(R.id.bleStatusRow).setVisibility(View.GONE);
+            paneView.findViewById(R.id.systemBondedPanel).setVisibility(View.GONE);
+            paneView.findViewById(R.id.garminPanel).setVisibility(View.GONE);
+            deviceList.setVisibility(View.GONE);
+            emptyState.setVisibility(View.GONE);
+            bleSettingsButton.setEnabled(false);
+            if (gateway != null) gateway.bind(paneView.findViewById(R.id.gatewayPanel));
+            return;
+        }
+        paneView.findViewById(R.id.bleStatusRow).setVisibility(
+                mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
+        connectionStatusTV.setVisibility(
+                mode == ConnectionModeController.Mode.SAMSUNG ? View.GONE : View.VISIBLE);
         scanButton.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
         deviceList.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
-        emptyState.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL
-                && scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
-        systemBondedWatchStatus.setVisibility(mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
+        if (mode != ConnectionModeController.Mode.TRADITIONAL) {
+            emptyState.setVisibility(View.GONE);
+        }
+        paneView.findViewById(R.id.systemBondedPanel).setVisibility(
+                mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
         paneView.findViewById(R.id.garminPanel).setVisibility(
                 mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
         if (garminSettingsButton != null) {
-            garminSettingsButton.setEnabled(mode == ConnectionModeController.Mode.GARMIN
-                    && garminClient != null && garminClient.isConnected());
+            garminSettingsButton.setVisibility(setupPurpose
+                    && mode == ConnectionModeController.Mode.GARMIN ? View.VISIBLE : View.GONE);
+            garminSettingsButton.setEnabled(setupPurpose && mode == ConnectionModeController.Mode.GARMIN
+                    && garminClient != null && currentGarminBloodhoundLink(garminClient) != null);
+            garminSettingsButton.setAlpha(garminSettingsButton.isEnabled() ? 1f : 0.4f);
         }
-        if (autoReconnectCB != null) {
-            autoReconnectCB.setEnabled(mode == ConnectionModeController.Mode.TRADITIONAL);
-            autoReconnectCB.setVisibility(mode == ConnectionModeController.Mode.TRADITIONAL
-                    ? View.VISIBLE : View.GONE);
-            autoReconnectCB.setChecked(bleClient != null && bleClient.isAutoReconnectEnabled());
-            paneView.findViewById(R.id.autoReconnectDescription).setVisibility(
-                    mode == ConnectionModeController.Mode.TRADITIONAL ? View.VISIBLE : View.GONE);
+        boolean bleReady = mode == ConnectionModeController.Mode.TRADITIONAL
+                && bleClient != null && bleClient.isConnected();
+        if (bleSettingsButton != null) {
+            bleSettingsButton.setVisibility(View.GONE);
+            bleSettingsButton.setEnabled(setupPurpose && bleReady);
+            bleSettingsButton.setAlpha(setupPurpose && bleReady ? 1f : 0.4f);
+        }
+        if (systemBondedSettingsButton != null) {
+            systemBondedSettingsButton.setVisibility(setupPurpose
+                    && mode == ConnectionModeController.Mode.SAMSUNG ? View.VISIBLE : View.GONE);
+        }
+        if (deviceAdapter != null) deviceAdapter.setSettingsVisible(setupPurpose);
+        if (connectedCardView != null && selectedDevice != null) {
+            bindConnectedCard(connectedCardView, selectedDevice);
+        }
+        if (mode == ConnectionModeController.Mode.TRADITIONAL) {
+            scanButton.setText(managementRelease.isPending() ? "Wait" : bleReady ? "Disconnect" : "Scan");
+            scanButton.setEnabled(!managementRelease.isPending());
+        }
+        if (mode == ConnectionModeController.Mode.GARMIN && garminClient != null) {
+            renderGarminConnection(garminClient.isConnected());
         }
         if (connectionStatusTV != null) {
-            connectionStatusTV.setText(mode == ConnectionModeController.Mode.GARMIN
+            setConnectionStatus(mode == ConnectionModeController.Mode.GARMIN
                     ? garminClient != null ? garminClient.getStatus() : "Garmin Connect IQ is off."
                     : bleClient != null && bleClient.isConnected()
-                    ? "CONNECTED" : systemBondedEnabled ? systemBondedConnection.getStatus() : "DISCONNECTED");
+                    ? "CONNECTED" : systemBondedEnabled ? systemBondedConnection.getStatus() : "NOT CONNECTED");
         }
         updateSystemBondedControl();
     }
 
     private void showConnectionModeChooser() {
-        ConnectionModeController.Mode[] modes = ConnectionModeController.Mode.values();
-        String[] labels = new String[modes.length];
-        for (int i = 0; i < modes.length; ++i) labels[i] = modes[i].label;
-        new AlertDialog.Builder(pluginContext).setTitle("Connection mode")
-                .setSingleChoiceItems(labels, connectionModes.getMode().ordinal(), (dialog, which) -> {
+        if (connectionModes.isPairingLocked()) return;
+        ConnectionModeController.Mode[] modes = {
+                ConnectionModeController.Mode.TRADITIONAL,
+                ConnectionModeController.Mode.GARMIN,
+                ConnectionModeController.Mode.SAMSUNG
+        };
+        String[] labels = {"BLE", "Garmin Connect", "Samsung Wearable"};
+        int selected = 0;
+        for (int i = 0; i < modes.length; ++i) {
+            if (modes[i] == connectionModes.getMode()) selected = i;
+        }
+        new AlertDialog.Builder(MapView.getMapView().getContext()).setTitle("Pairing Mode")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
                     selectConnectionMode(modes[which]);
+                    dialog.dismiss();
+                }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showPurposeChooser() {
+        Context host = MapView.getMapView().getContext();
+        String[] labels = {"Bond Single Watch", "Configure Single Watch", "Multiwatch Gateway"};
+        ArrayAdapter<String> choices = new ArrayAdapter<String>(
+                host, android.R.layout.simple_list_item_single_choice, labels) {
+            @Override public boolean areAllItemsEnabled() { return true; }
+            @Override public boolean isEnabled(int position) { return true; }
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                view.setEnabled(isEnabled(position));
+                view.setAlpha(isEnabled(position) ? 1f : 0.4f);
+                return view;
+            }
+        };
+        new AlertDialog.Builder(host).setTitle("Purpose")
+                .setSingleChoiceItems(choices, gatewayPurpose ? 2 : setupPurpose ? 1 : 0, (dialog, which) -> {
+                    if (which == 1 && connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
+                        Toast.makeText(host, "Select BLE or Samsung Wearable before Configure Single Watch.",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    setupPurpose = which == 1;
+                    gatewayPurpose = which == 2;
+                    stopLocationDiagnostics("companion purpose changed");
+                    phoneManagedSettingsRequested =
+                            CompanionSettingsPolicy.phoneManaged(setupPurpose, gatewayPurpose);
+                    if (phoneManagedSettingsCB != null) {
+                        phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
+                    }
+                    systemBondedPreferences().edit().putBoolean("setup_purpose", setupPurpose)
+                            .putString("purpose", gatewayPurpose ? "gateway" : setupPurpose ? "setup" : "bond").apply();
+                    if (gatewayPurpose) persistConnectionMode(ConnectionModeController.Mode.TRADITIONAL);
+                    configureWatchChatEchoSuppression(!gatewayPurpose);
+                    connectionModes.changePurpose(gatewayPurpose);
+                    purposeButton.setText(gatewayPurpose ? "Multiwatch Gateway"
+                            : setupPurpose ? "Configure Single Watch" : "Bond Single Watch");
+                    showDeviceScreen();
                     dialog.dismiss();
                 }).setNegativeButton(android.R.string.cancel, null).show();
     }
@@ -723,11 +1102,326 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void updateSystemBondedControl() {
         if (systemBondedWatchStatus == null || systemBondedConnection == null) return;
-        WearTakBleClient.DiscoveredDevice candidate = bleClient.getKnownBondedCompanion();
-        if (systemBondedWatchStatus != null) {
-            systemBondedWatchStatus.setText(systemBondedConnection.getStatus()
-                    + (candidate != null ? "\nBonded candidate: " + bleClient.describeBondedWatch(candidate.address)
-                    : "\nNo verified compatible bond available; enable Bluetooth/Nearby Devices and run WearTAK to identify one."));
+        SystemBondedWatchConnection.State state = systemBondedConnection.getState();
+        boolean noWatch = state == SystemBondedWatchConnection.State.NOT_FOUND;
+        boolean connected = state == SystemBondedWatchConnection.State.CONNECTED
+                && bleClient != null && bleClient.isConnected();
+        systemBondedWatchStatus.setText(connected ? singleWatchConnectionStatus()
+                : state == SystemBondedWatchConnection.State.BLUETOOTH_OFF ? "BLUETOOTH OFF"
+                : state == SystemBondedWatchConnection.State.CONNECTING ? "CONNECTING" : "NOT CONNECTED");
+        styleConnectionStatus(systemBondedWatchStatus);
+        systemBondedConnectButton.setText(noWatch ? "Open"
+                : managementRelease.isPending() ? "Wait"
+                : systemBondedConnection.isActive() ? "Disconnect" : "Connect");
+        systemBondedConnectButton.setEnabled(!managementRelease.isPending());
+        systemBondedSettingsButton.setEnabled(
+                setupPurpose && systemBondedConnection.getState() == SystemBondedWatchConnection.State.CONNECTED
+                        && bleClient != null && bleClient.isConnected());
+        systemBondedSettingsButton.setAlpha(systemBondedSettingsButton.isEnabled() ? 1f : 0.4f);
+    }
+
+    private void setConnectionStatus(String status) {
+        if (connectionStatusTV == null) return;
+        connectionStatusTV.setText("CONNECTED".equals(status) ? singleWatchConnectionStatus() : status);
+        styleConnectionStatus(connectionStatusTV);
+    }
+
+    private String singleWatchConnectionStatus() {
+        if (phoneSettingsHandshake.isPending()) return "CONNECTED - SYNCING";
+        if (phoneSettingsHandshake.isFailed()) return "CONNECTED - SYNC FAILED";
+        return "CONNECTED";
+    }
+
+    private void cancelPhoneSettingsHandshake() {
+        phoneSettingsHandshake.cancel();
+        if (phoneSettingsTimeout != null) mainHandler.removeCallbacks(phoneSettingsTimeout);
+        phoneSettingsTimeout = null;
+        phoneSettingsRetryJson = null;
+    }
+
+    private void startPhoneSettingsHandshake() {
+        cancelPhoneSettingsHandshake();
+        handlePhoneSettingsAction(phoneSettingsHandshake.begin(SystemClock.elapsedRealtime()));
+    }
+
+    private void handlePhoneSettingsAction(PhoneSettingsHandshake.Action action) {
+        if (action == PhoneSettingsHandshake.Action.NONE) return;
+        if (phoneSettingsTimeout != null) mainHandler.removeCallbacks(phoneSettingsTimeout);
+        phoneSettingsTimeout = null;
+        if (action == PhoneSettingsHandshake.Action.REQUEST) {
+            requestSettingsFromWatch("management handshake");
+        } else if (action == PhoneSettingsHandshake.Action.APPLY) {
+            if (phoneSettingsRetryJson == null) {
+                phoneSettingsPushedThisConnection = sendSettingsToWatch();
+            } else if (bleClient != null) {
+                phoneSettingsPushedThisConnection = bleClient.writeJsonLineToWatch(phoneSettingsRetryJson);
+            }
+        } else if (action == PhoneSettingsHandshake.Action.FAILED) {
+            String message = "Watch management sync failed. Refresh settings or reconnect to retry.";
+            Log.e(TAG, message);
+            if (settingsStatusTV != null) settingsStatusTV.setText(message);
+            Toast.makeText(MapView.getMapView().getContext(), message, Toast.LENGTH_LONG).show();
+        } else if (action == PhoneSettingsHandshake.Action.CONFIRMED) {
+            Log.i(TAG, "Watch phone management confirmed by acknowledgement and settings snapshot");
+            if (settingsStatusTV != null) settingsStatusTV.setText("Phone management confirmed on watch.");
+            phoneSettingsRetryJson = null;
+        }
+        setConnectionStatus("CONNECTED");
+        updateSystemBondedControl();
+        updateSettingsSendState();
+        if (connectedCardView != null) {
+            TextView state = connectedCardView.findViewById(R.id.deviceState);
+            if (state != null) state.setText(singleWatchConnectionStatus());
+        }
+        if (!phoneSettingsHandshake.isPending()) return;
+        final long attempt = phoneSettingsHandshake.token();
+        final long settingsToken = settingsSession.token();
+        final WearTakBleClient owner = bleClient;
+        final long session = owner == null ? -1 : owner.getReadySession();
+        phoneSettingsTimeout = () -> {
+            if (!phoneSettingsHandshake.isCurrent(attempt)
+                    || !settingsSession.isCurrent(settingsToken)
+                    || managementRelease.isPending() || owner == null || owner != bleClient
+                    || session < 0 || owner.getReadySession() != session) return;
+            handlePhoneSettingsAction(phoneSettingsHandshake.timeout(attempt, SystemClock.elapsedRealtime()));
+        };
+        mainHandler.postDelayed(phoneSettingsTimeout, PhoneSettingsHandshake.TIMEOUT_MILLIS);
+    }
+
+    private void handleLocationDiagnosticsEnvelope(JSONObject envelope, WearTakBleClient owner,
+                                                   long bleSession) {
+        String type = envelope.optString("msgType", envelope.optString("msg_type", ""));
+        String session = envelope.optString("session", null);
+        if (!LocationDiagnosticsProtocol.isValidSession(session)) {
+            Log.w(TAG, "Ignoring diagnostics message with invalid session token");
+            return;
+        }
+        if (LocationDiagnosticsProtocol.HELLO.equals(type)) {
+            if (owner != bleClient || bleSession != owner.getReadySession() ||
+                    !owner.isBondedConnected() ||
+                    connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL ||
+                    setupPurpose || gatewayPurpose) return;
+            JSONObject valid = LocationDiagnosticsProtocol.parse(
+                    envelope, LocationDiagnosticsProtocol.HELLO, session);
+            if (valid == null) {
+                Log.w(TAG, "Ignoring invalid bonded diagnostics capability request");
+                return;
+            }
+            startPhoneLocationDiagnostics(owner, bleSession, session);
+            return;
+        }
+        if ((!LocationDiagnosticsProtocol.SNAPSHOT.equals(type) &&
+                !LocationDiagnosticsProtocol.STOP.equals(type)) ||
+                owner != bleClient || bleSession != owner.getReadySession() ||
+                !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
+                connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) return;
+        if (LocationDiagnosticsProtocol.STOP.equals(type)) {
+            if (locationDiagnostics.stopForSession(envelope, bleSession)) {
+                watchLocationDiagnostics = null;
+                Log.i(TAG, "Bonded location diagnostics stopped: watch disabled diagnostics");
+                updateLocationDiagnosticsUi();
+            } else {
+                Log.w(TAG, "Ignoring invalid or stale watch location diagnostics stop");
+            }
+            return;
+        }
+        String activeSession = locationDiagnostics.session();
+        if (activeSession == null) return;
+        JSONObject valid = LocationDiagnosticsProtocol.parse(
+                envelope, type, activeSession);
+        if (valid == null || (LocationDiagnosticsProtocol.SNAPSHOT.equals(type) &&
+                valid.optJSONObject("payload") == null)) {
+            Log.w(TAG, "Ignoring invalid or stale watch location diagnostics snapshot");
+            return;
+        }
+        watchLocationDiagnostics = valid.optJSONObject("payload");
+        updateLocationDiagnosticsUi();
+    }
+
+    private void startPhoneLocationDiagnostics(WearTakBleClient owner, long bleSession,
+                                               String diagnosticSession) {
+        startPhoneLocationDiagnostics(owner, bleSession, diagnosticSession, 0);
+    }
+
+    private void startPhoneLocationDiagnostics(WearTakBleClient owner, long bleSession,
+                                               String diagnosticSession, int retry) {
+        if (diagnosticSession.equals(locationDiagnostics.session()) &&
+                bleSession == locationDiagnostics.readySession()) return;
+        final JSONObject capability;
+        try {
+            capability = LocationDiagnosticsProtocol.capability(diagnosticSession, true);
+        } catch (org.json.JSONException | IllegalArgumentException error) {
+            Log.e(TAG, "Unable to build diagnostics capability", error);
+            return;
+        }
+        if (!owner.writeDiagnosticJsonLineToWatch(capability.toString(), bleSession)) {
+            Log.i(TAG, "Diagnostics capability deferred while operational BLE traffic is active");
+            if (retry == 0) {
+                mainHandler.postDelayed(() -> {
+                    if (owner == bleClient && bleSession == owner.getReadySession() &&
+                            owner.isBondedConnected() && !setupPurpose && !gatewayPurpose &&
+                            connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL) {
+                        startPhoneLocationDiagnostics(owner, bleSession, diagnosticSession, 1);
+                    }
+                }, 1500L);
+            } else {
+                Log.w(TAG, "Dropping diagnostics capability after bounded operational-traffic deferral");
+            }
+            return;
+        }
+        watchLocationDiagnostics = null;
+        locationDiagnostics.start(pluginContext, diagnosticSession, bleSession, snapshot -> {
+            if (owner != bleClient || owner.getReadySession() != bleSession ||
+                    !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
+                    !diagnosticSession.equals(locationDiagnostics.session())) return;
+            if (!owner.writeDiagnosticJsonLineToWatch(snapshot.toString(), bleSession)) {
+                Log.i(TAG, "Dropping bounded diagnostics sample while operational BLE traffic is queued");
+            }
+            updateLocationDiagnosticsUi();
+        });
+        updateLocationDiagnosticsUi();
+    }
+
+    private void stopLocationDiagnostics(String reason) {
+        if (locationDiagnostics.session() == null) return;
+        locationDiagnostics.stop();
+        watchLocationDiagnostics = null;
+        Log.i(TAG, "Bonded location diagnostics stopped: " + reason);
+        updateLocationDiagnosticsUi();
+    }
+
+    private void updateLocationDiagnosticsUi() {
+        if (locationDiagnosticsStatus == null) return;
+        boolean eligible = !setupPurpose && !gatewayPurpose &&
+                connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL;
+        if (!eligible || locationDiagnostics.session() == null) {
+            locationDiagnosticsStatus.setVisibility(View.GONE);
+            return;
+        }
+        JSONObject phone = locationDiagnostics.payloadSnapshot();
+        String phoneLine = formatDiagnosticsSample("Phone", phone);
+        String watchLine = watchLocationDiagnostics == null
+                ? "Watch: waiting for observation" : formatDiagnosticsSample("Watch", watchLocationDiagnostics);
+        locationDiagnosticsStatus.setText("Bonded Location Diagnostics\n" + phoneLine + "\n" + watchLine);
+        locationDiagnosticsStatus.setVisibility(View.VISIBLE);
+    }
+
+    private String formatDiagnosticsSample(String label, JSONObject sample) {
+        String quality = LocationDiagnosticsProtocol.quality(sample);
+        String reason = sample.optString("error", sample.optString("reason", "GNSS observation unknown"));
+        String age = sample.isNull("ageMs") ? "unknown" : sample.optLong("ageMs") / 1000L + "s";
+        String accuracy = sample.isNull("accuracyM") ? "unknown"
+                : String.format(java.util.Locale.ROOT, "%.1f m", sample.optDouble("accuracyM"));
+        String sats = sample.optBoolean("satelliteStatusSupported", false)
+                ? sample.optInt("used", 0) + "/" + sample.optInt("satellites", 0) + " used" : "unknown";
+        return label + ": " + quality + " (" + reason + "); age " + age +
+                "; accuracy " + accuracy + "; satellites " + sats;
+    }
+
+    static void styleConnectionStatus(TextView status) {
+        String text = status.getText().toString();
+        boolean notConnected = "NOT CONNECTED".equals(text) || "BLUETOOTH OFF".equals(text);
+        status.setBackgroundResource(notConnected ? R.drawable.bg_chip_not_connected
+                : "CONNECTED".equals(text) ? R.drawable.bg_chip_success
+                : "NOT INSTALLED".equals(text) || "Garmin Connect Not Found".equals(text)
+                ? R.drawable.bg_chip_error : R.drawable.bg_chip_neutral);
+        status.setTextColor(notConnected ? android.graphics.Color.BLACK : android.graphics.Color.WHITE);
+    }
+
+    private void toggleWearableConnection() {
+        if (connectionModes.getMode() != ConnectionModeController.Mode.SAMSUNG
+                || systemBondedConnection == null) return;
+        if (systemBondedConnection.getState() == SystemBondedWatchConnection.State.NOT_FOUND) {
+            openCompanionApp(SAMSUNG_WEARABLE_PACKAGE, "Samsung Wearable");
+            return;
+        }
+        boolean pause = systemBondedConnection.isActive();
+        if (pause) {
+            if (bleClient != null && bleClient.getReadySession() >= 0) {
+                requestBleManagementRelease();
+            } else {
+                systemBondedPreferences().edit().putBoolean(KEY_WEARABLE_PAUSED, true).apply();
+                systemBondedConnection.pause();
+                clearSessionSettings();
+                releaseNotice("Samsung route paused without unlock confirmation: no ready watch link. "
+                        + "Watch settings may remain locked; reconnect or unpair on the watch.");
+            }
+        } else {
+            systemBondedPreferences().edit().putBoolean(KEY_WEARABLE_PAUSED, false).apply();
+            systemBondedConnection.start();
+        }
+        updateSystemBondedControl();
+    }
+
+    private void openCompanionApp(String packageName, String appName) {
+        Context host = MapView.getMapView().getContext();
+        Intent launch = host.getPackageManager().getLaunchIntentForPackage(packageName);
+        if (launch == null) {
+            if (SAMSUNG_WEARABLE_PACKAGE.equals(packageName) && isSamsungInstalledPreview()) {
+                Log.i(TAG, "Samsung Wearable installed-state preview; app is not installed");
+                Toast.makeText(host, "Emulator preview only: Samsung Wearable is not installed.",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (SAMSUNG_WEARABLE_PACKAGE.equals(packageName)) {
+                // An explicit activity can launch even when ATAK cannot query the package.
+                launch = new Intent(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setClassName(packageName,
+                                packageName + ".setupwizard.SetupWizardWelcomeActivity")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            } else {
+                Log.w(TAG, appName + " has no available launch activity");
+                Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
+                        Toast.LENGTH_LONG).show();
+                openCompanionAppListing(packageName);
+                return;
+            }
+        }
+        try {
+            host.startActivity(launch);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Log.e(TAG, "Unable to launch " + appName, e);
+            Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
+                    Toast.LENGTH_LONG).show();
+            openCompanionAppListing(packageName);
+        }
+    }
+
+    private boolean isCompanionAppInstalled(String packageName) {
+        if (SAMSUNG_WEARABLE_PACKAGE.equals(packageName) && isSamsungInstalledPreview()) {
+            return true;
+        }
+        try {
+            MapView.getMapView().getContext().getPackageManager().getApplicationInfo(packageName, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    private boolean isSamsungInstalledPreview() {
+        return SamsungWearablePreview.isEnabled(BuildConfig.DEBUG, Build.HARDWARE,
+                new File(MapView.getMapView().getContext().getFilesDir(),
+                        "weartak-preview-samsung-installed").isFile());
+    }
+
+    private void openCompanionAppListing(String packageName) {
+        Context host = MapView.getMapView().getContext();
+        Intent store = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName));
+        store.setPackage("com.android.vending");
+        try {
+            host.startActivity(store);
+        } catch (ActivityNotFoundException e) {
+            Log.i(TAG, "Play Store unavailable; opening web listing for " + packageName);
+            try {
+                host.startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse("https://play.google.com/store/apps/details?id=" + packageName)));
+            } catch (ActivityNotFoundException noBrowser) {
+                Log.e(TAG, "No application can open the store listing for " + packageName, noBrowser);
+                Toast.makeText(host, "No Play Store or browser available to open the app listing.",
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -739,11 +1433,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     @Override
     public void onStop() {
         runOnMain(() -> {
+            simulatorDiagnostics.stop();
+            configureWatchChatEchoSuppression(false);
             connectionModes.stop();
         });
     }
 
     private void startGarmin(final long token) {
+            if (systemBondedPreferences().getBoolean(KEY_GARMIN_PAUSED, false)) {
+                garminEnabled = false;
+                renderGarminConnection(false);
+                return;
+            }
             garminEnabled = true;
                 garminClient = new GarminConnectIqClient(pluginContext,
                         new GarminConnectIqClient.Listener() {
@@ -754,6 +1455,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     if (garminConnectionStatusTV != null) {
                                         garminConnectionStatusTV.setText(status);
                                     }
+                                    renderGarminConnection(garminClient.isConnected());
                                     if (connectionStatusTV != null) connectionStatusTV.setText(status);
                                 });
                             }
@@ -767,7 +1469,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     }
                                     renderGarminConnection(connected);
                                     if (garminEntities != null) garminEntities.refreshLinks();
+                                    if (garminRoutes != null) garminRoutes.refreshLinks();
                                     refreshGarminSettingsLink();
+                                    if (managementRelease.isPending() && releaseCurrent != null
+                                            && !releaseCurrent.getAsBoolean()) {
+                                        failManagementRelease("The original Garmin watch session changed.");
+                                    }
                                     updateSettingsSendState();
                                     updateConnectionModeUi();
                                 });
@@ -813,6 +1520,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     runnable -> mainHandler.post(runnable),
                     () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
             garminEntities.start();
+            garminRouteSource = new GarminRouteMapSource(MapView.getMapView());
+            garminRoutes = new GarminRouteForwarder(garminRouteSource, owner::entityLinks,
+                    runnable -> mainHandler.post(runnable),
+                    () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
+            garminRoutes.start();
             startPhoneAlertForwarding(token);
             garminClient.start();
     }
@@ -847,22 +1559,41 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         return links.size() == 1 && links.get(0).isCurrent() ? links.get(0) : null;
     }
 
+    private boolean isGarminConnectMissing() {
+        return !isCompanionAppInstalled(GARMIN_CONNECT_PACKAGE)
+                || garminClient != null && garminClient.getStatus().contains("GCM_NOT_INSTALLED");
+    }
+
     private void renderGarminConnection(boolean connected) {
         if (garminConnectionBadgeTV == null) return;
-        garminConnectionBadgeTV.setText(connected ? "CONNECTED" : "NOT CONNECTED");
-        garminConnectionBadgeTV.setBackgroundResource(
-                connected ? R.drawable.bg_chip_success : R.drawable.bg_chip_warning);
+        boolean paused = systemBondedPreferences().getBoolean(KEY_GARMIN_PAUSED, false);
+        boolean connectMobileMissing = isGarminConnectMissing();
+        garminConnectionBadgeTV.setText(connectMobileMissing
+                ? "Garmin Connect Not Found"
+                : paused ? "PAUSED" : connected ? "CONNECTED" : "NOT CONNECTED");
+        styleConnectionStatus(garminConnectionBadgeTV);
+        if (garminToggleButton != null) {
+            garminToggleButton.setText(connectMobileMissing ? "Install"
+                    : managementRelease.isPending() ? "Wait"
+                    : paused ? "Resume" : connected ? "Pause" : "Open");
+            garminToggleButton.setEnabled(!managementRelease.isPending());
+        }
+        if (garminConnectionStatusTV != null) {
+            garminConnectionStatusTV.setVisibility(View.GONE);
+        }
     }
 
     private void renderGarminConnecting() {
         if (garminConnectionBadgeTV == null) return;
         garminConnectionBadgeTV.setText("CONNECTING");
+        garminConnectionBadgeTV.setTextColor(android.graphics.Color.WHITE);
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_warning);
     }
 
     private void renderGarminOff() {
         if (garminConnectionBadgeTV == null) return;
         garminConnectionBadgeTV.setText("OFF");
+        garminConnectionBadgeTV.setTextColor(android.graphics.Color.WHITE);
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_neutral);
     }
 
@@ -999,7 +1730,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         garminSettingsSnapshotLoaded = true;
         lastSettingsPayload = payload;
         settingsModeLoadedThisConnection = true;
-        phoneManagedSettingsRequested = payload.optBoolean("phoneManagedSettings", false);
+        phoneManagedSettingsRequested = CompanionSettingsPolicy.phoneManaged(setupPurpose, gatewayPurpose);
         if (phoneManagedSettingsCB != null) {
             phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
         }
@@ -1009,7 +1740,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         updatePhoneIdentityViews();
         updateConnectedCardTitleFromCallsign(actualWatchCallsign);
         updateSettingsSendState();
-        if (phoneManagedSettingsRequested && !phoneSettingsPushedThisConnection) {
+        if (!setupPurpose && phoneManagedSettingsRequested && !phoneSettingsPushedThisConnection) {
             phoneSettingsPushedThisConnection = sendSettingsToWatch();
         }
     }
@@ -1034,6 +1765,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void handleGarminMessage(JSONObject envelope, GarminEntityForwarder.Link link) {
         if (!garminEnabled) return;
         String msgType = envelope.optString("msgType", "");
+        if (PhoneManagementRelease.ACK.equals(msgType)
+                || PhoneManagementRelease.ACK.equals(envelope.optString("type", ""))) {
+            handleManagementReleaseAck(envelope.optJSONObject("payload"), link);
+            return;
+        }
         Log.i(TAG, "Garmin Connect IQ message: " + msgType);
         if ("bloodhound_control".equals(msgType)
                 || "bloodhound_control_result".equals(msgType)) {
@@ -1054,6 +1790,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
         if ("entity_sync_request".equals(msgType)) {
             JSONObject requestPayload = envelope.optJSONObject("payload");
+            if (garminClient != null && requestPayload != null) {
+                garminClient.setRouteVersion(link, requestPayload.optInt("routeVersion", 0));
+            }
             int requestedLimit = requestPayload == null ? 50 : requestPayload.optInt("limit", 50);
             if (garminEntities == null || !garminEntities.sendSnapshot(link, requestedLimit)) {
                 Log.w(TAG, "Unable to send Garmin entity snapshot");
@@ -1062,13 +1801,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 }
             } else if (garminConnectionStatusTV != null) {
                 garminConnectionStatusTV.setText("Garmin watch active: sending "
-                        + garminEntities.snapshotSize() + " nearby unit(s).");
+                        + garminEntities.snapshotSize() + " nearest entities (limit 50)"
+                        + (garminEntities.snapshotTruncated() ? "; additional entities omitted." : "."));
             }
+            if (garminRoutes != null) garminRoutes.refreshLink(link);
             return;
         }
         if ("relay_hello".equals(msgType) && garminClient != null) {
+            if (garminEntities != null) garminEntities.refreshLinks();
             JSONObject hello = envelope.optJSONObject("payload");
             if (hello != null) {
+                garminClient.setRouteVersion(link, hello.optInt("routeVersion", 0));
+                if (garminRoutes != null) garminRoutes.refreshLink(link);
                 try {
                     Map<String, Object> status = GarminChatPolicy.relayStatus(
                             hello, isCurrentGarminBloodhoundLink(link));
@@ -1097,11 +1841,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         bleCotBridge.setPhoneMarkerPolicy(phoneMarkerPolicy);
         phoneMarkerRelay = new PhoneMarkerMapRelay(phoneMarkerPolicy, bleClient);
         phoneMarkerRelay.start(MapView.getMapView());
+        phoneUserRelay = new PhoneUserMapRelay(bleClient);
+        phoneUserRelay.start(MapView.getMapView());
     }
 
     private void unregisterMapItemListener() {
         if (phoneMarkerRelay != null) phoneMarkerRelay.stop();
         phoneMarkerRelay = null;
+        if (phoneUserRelay != null) phoneUserRelay.stop();
+        phoneUserRelay = null;
     }
 
     private void startPhoneAlertForwarding(long token) {
@@ -1131,6 +1879,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void forwardPhoneEmergencyToWatch(CotEvent event, android.os.Bundle extras) {
+        if (event == null) return;
+        if (gatewayPurpose && gateway != null) {
+            StringBuilder cot = new StringBuilder();
+            event.buildXml(cot);
+            gateway.forwardPhoneEmergency(cot.toString());
+            return;
+        }
         if (garminEnabled && garminEntitySource != null) {
             garminEntitySource.emergency(event);
             return;
@@ -1178,6 +1933,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             // device screen
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
+            locationDiagnosticsStatus = paneView.findViewById(R.id.locationDiagnosticsStatus);
             garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
             garminConnectionBadgeTV = paneView.findViewById(R.id.garminConnectionBadge);
             garminSettingsButton = paneView.findViewById(R.id.garminSettingsButton);
@@ -1194,31 +1950,62 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 renderGarminOff();
             }
             garminToggleButton = paneView.findViewById(R.id.garminToggleButton);
-            garminToggleButton.setText("Retry Garmin Connect IQ");
+            garminToggleButton.setText("Retry");
             garminToggleButton.setOnClickListener(v -> {
-                connectionModes.restart();
-            });
-            autoReconnectCB = paneView.findViewById(R.id.autoReconnectCheckBox);
-            autoReconnectCB.setChecked(bleClient != null && bleClient.isAutoReconnectEnabled());
-            autoReconnectCB.setOnClickListener(v -> {
-                if (connectionModes.getMode() == ConnectionModeController.Mode.TRADITIONAL
-                        && bleClient != null) {
-                    bleClient.setAutoReconnectEnabled(autoReconnectCB.isChecked());
+                if (isGarminConnectMissing()) {
+                    openCompanionAppListing(GARMIN_CONNECT_PACKAGE);
+                    return;
                 }
+                if (systemBondedPreferences().getBoolean(KEY_GARMIN_PAUSED, false)) {
+                    systemBondedPreferences().edit().putBoolean(KEY_GARMIN_PAUSED, false).apply();
+                    connectionModes.restart();
+                    return;
+                }
+                if (garminClient == null || !garminClient.isConnected()) {
+                    openCompanionApp(GARMIN_CONNECT_PACKAGE, "Garmin Connect");
+                    return;
+                }
+                requestGarminManagementRelease();
             });
+            renderGarminConnection(garminEnabled && garminClient != null && garminClient.isConnected());
             scanButton = paneView.findViewById(R.id.scanButton);
+            bleSettingsButton = paneView.findViewById(R.id.bleSettingsButton);
+            bleSettingsButton.setOnClickListener(v -> {
+                if (connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL
+                        || bleClient == null || !bleClient.isConnected()) return;
+                showSettingsScreen();
+                requestSettingsFromWatch("bleSettingsGear");
+            });
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
             systemBondedWatchStatus = paneView.findViewById(R.id.systemBondedWatchStatus);
+            systemBondedConnectButton = paneView.findViewById(R.id.systemBondedConnectButton);
+            systemBondedConnectButton.setOnClickListener(v -> toggleWearableConnection());
+            systemBondedSettingsButton = paneView.findViewById(R.id.systemBondedSettingsButton);
+            systemBondedSettingsButton.setOnClickListener(v -> {
+                if (bleClient == null || !bleClient.isConnected()) return;
+                showSettingsScreen();
+                requestSettingsFromWatch("wearableSettings");
+            });
             connectionModeButton = paneView.findViewById(R.id.connectionModeButton);
-            connectionModeAdvisory = paneView.findViewById(R.id.connectionModeAdvisory);
             connectionModeButton.setOnClickListener(v -> showConnectionModeChooser());
+            setupPurpose = !gatewayPurpose && systemBondedPreferences().getBoolean("setup_purpose", false);
+            if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) setupPurpose = false;
+            purposeButton = paneView.findViewById(R.id.purposeButton);
+            purposeButton.setText(gatewayPurpose ? "Multiwatch Gateway"
+                    : setupPurpose ? "Configure Single Watch" : "Bond Single Watch");
+            purposeButton.setOnClickListener(v -> showPurposeChooser());
 
             deviceList.setLayoutManager(new LinearLayoutManager(pluginContext));
             deviceAdapter = new BleDeviceAdapter(new BleDeviceAdapter.Listener() {
                 @Override
                 public void onConnectClicked(WearTakBleClient.DiscoveredDevice device) {
                     connectToDevice(device);
+                }
+
+                @Override
+                public void onDisconnectClicked() {
+                    WearTakPlugin.this.onDisconnectClicked();
                 }
 
                 @Override
@@ -1236,11 +2023,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                 }
             });
+            deviceAdapter.setSettingsVisible(setupPurpose);
             deviceList.setAdapter(deviceAdapter);
             updateConnectionModeUi();
 
             scanButton.setOnClickListener(v -> {
                 if (connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) return;
+                if (bleClient != null && bleClient.isConnected()) {
+                    onDisconnectClicked();
+                    return;
+                }
                 disableSystemBondedForManualUse();
                 clearSessionSettings();
                 int sessionId = ++scanSessionCount;
@@ -1264,6 +2056,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             // settings screen
             settingsBackButton = paneView.findViewById(R.id.settingsBackButton);
             serverSettingsGroup = paneView.findViewById(R.id.serverSettingsGroup);
+            standaloneSetupButton = paneView.findViewById(R.id.standaloneSetupButton);
+            standaloneSetupButton.setOnClickListener(v -> {
+                boolean expanded = serverSettingsGroup.getVisibility() != View.VISIBLE;
+                serverSettingsGroup.setVisibility(expanded ? View.VISIBLE : View.GONE);
+                standaloneSetupButton.setText(expanded ? "Hide Standalone Setup" : "Standalone Setup");
+            });
 //            settingsDeviceSubtitle = paneView.findViewById(R.id.settingsDeviceSubtitle);
             watchCallsignET = paneView.findViewById(R.id.watchCallsign);
             phoneTeamTV = paneView.findViewById(R.id.phoneTeam);
@@ -1281,6 +2079,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                 }
                 phoneManagedSettingsRequested = phoneManagedSettingsCB.isChecked();
+                cancelPhoneSettingsHandshake();
+                setConnectionStatus("CONNECTED");
+                updateSystemBondedControl();
+                updateSettingsSendState();
                 if (!phoneManagedSettingsRequested && watchCallsignET != null) {
                     setText(watchCallsignET, actualWatchCallsign);
                 }
@@ -1450,16 +2252,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (deviceAdapter != null) deviceAdapter.setDevices(scannedDevices);
 
         if (emptyState != null) {
-            emptyState.setText("No devices yet. Tap Scan.");
-            emptyState.setVisibility(View.VISIBLE);
+            emptyState.setText("");
+            emptyState.setVisibility(View.GONE);
         }
 
         if (scanButton != null) scanButton.setText(SCAN_TEXT_DEFAULT);
         if (connectionStatusTV != null) {
-            connectionStatusTV.setText(bleClient != null && bleClient.isConnected()
-                    ? "CONNECTED (READY)"
+            setConnectionStatus(bleClient != null && bleClient.isConnected()
+                    ? "CONNECTED"
                     : systemBondedConnection != null && systemBondedEnabled
-                    ? systemBondedConnection.getStatus() : "DISCONNECTED");
+                    ? systemBondedConnection.getStatus() : "NOT CONNECTED");
         }
         updateSystemBondedControl();
 
@@ -1492,10 +2294,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 mainHandler.post(() -> {
                     if (sessionId != scanSessionCount) return;
                     if (emptyState != null) {
-                        emptyState.setVisibility(scannedDevices.isEmpty() ? View.VISIBLE : View.GONE);
+                        emptyState.setVisibility(View.GONE);
                     }
                     if (scanButton != null) {
-                        scanButton.setText(SCAN_TEXT_REFRESH);
+                        updateConnectionModeUi();
                     }
                     if (bleClient != null) bleClient.resumeAutoReconnect();
                 });
@@ -1510,7 +2312,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         emptyState.setVisibility(View.VISIBLE);
                     }
                     if (scanButton != null) {
-                        scanButton.setText(SCAN_TEXT_REFRESH);
+                        updateConnectionModeUi();
                     }
                     if (bleClient != null) bleClient.resumeAutoReconnect();
                 });
@@ -1529,6 +2331,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: request / parse / apply ----------
     private void requestSettingsFromWatch(String reason) {
+        if (managementRelease.isPending()) return;
         if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
             refreshGarminSettingsLink();
             GarminEntityForwarder.Link link = garminSettingsLink;
@@ -1557,6 +2360,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
         if (bleClient == null || !bleClient.isConnected()) return;
+        if (phoneSettingsHandshake.isFailed() && !setupPurpose && phoneManagedSettingsRequested) {
+            startPhoneSettingsHandshake();
+            return;
+        }
         phoneSettingsPushedThisConnection = false;
         lastSettingsApplyResult = null;
         String req = "{\"msg_type\":\"request_settings\"}";
@@ -1648,6 +2455,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // ---------- SETTINGS: send back to watch ----------
     private boolean sendSettingsToWatch() {
+        if (managementRelease.isPending()) return false;
         if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
             return sendSettingsToGarminWatch();
         }
@@ -1681,6 +2489,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         String jsonLine = root.toString().replace("\\/", "/");
+        if (phoneSettingsHandshake.isPending()) phoneSettingsRetryJson = jsonLine;
         lastSettingsApplyResult = null;
         boolean ok = bleClient.writeJsonLineToWatch(jsonLine);
         if (settingsStatusTV != null) {
@@ -1855,12 +2664,22 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
         if (serverSettingsGroup != null) {
-            serverSettingsGroup.setVisibility(garminMode ? View.GONE : View.VISIBLE);
+            serverSettingsGroup.setVisibility(setupPurpose && !garminMode ? View.VISIBLE : View.GONE);
+        }
+        if (standaloneSetupButton != null) {
+            standaloneSetupButton.setVisibility(View.GONE);
+            standaloneSetupButton.setText("Standalone Setup");
         }
         if (phoneManagedSettingsDescription != null) {
-            phoneManagedSettingsDescription.setText(garminMode
-                    ? "Off: send callsign and reporting profile only. TAK servers and P12 stay on this phone. On: sync phone identity and lock watch profile controls until disabled."
-                    : "Off: upload settings and P12, then disconnect. On: sync phone identity on reconnect and lock watch settings until disabled or unpaired.");
+            updateCompanionSettingsDescription();
+        }
+        if (phoneManagedSettingsCB != null) {
+            phoneManagedSettingsCB.setVisibility(setupPurpose ? View.GONE : View.VISIBLE);
+        }
+        if (setupPurpose) {
+            phoneManagedSettingsRequested = false;
+            if (phoneManagedSettingsCB != null) phoneManagedSettingsCB.setChecked(false);
+            setText(watchCallsignET, actualWatchCallsign);
         }
         updateSettingsSendState();
 //        if (settingsDeviceSubtitle != null) {
@@ -1921,6 +2740,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void updatePhoneIdentityViews() {
+        updateCompanionSettingsDescription();
         String callsign = getPhoneCallsign();
         if (watchCallsignET != null) {
             watchCallsignET.setEnabled(!phoneManagedSettingsRequested);
@@ -1930,8 +2750,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 setText(watchCallsignET, actualWatchCallsign);
             }
         }
-        if (phoneTeamTV != null) phoneTeamTV.setText("Phone team (managed mode): " + getPhoneTeam());
-        if (phoneRoleTV != null) phoneRoleTV.setText("Phone role (managed mode): " + getPhoneRole());
+        if (phoneTeamTV != null) phoneTeamTV.setText("Team (phone)\n" + getPhoneTeam());
+        if (phoneRoleTV != null) phoneRoleTV.setText("Role (phone)\n" + getPhoneRole());
+    }
+
+    private void updateCompanionSettingsDescription() {
+        if (phoneManagedSettingsDescription == null) return;
+        boolean garminMode = connectionModes.getMode() == ConnectionModeController.Mode.GARMIN;
+        phoneManagedSettingsDescription.setText(phoneManagedSettingsRequested
+                ? "Use this phone's ATAK callsign, team, and role. Identity syncs on reconnect; watch identity controls stay locked until disabled."
+                : garminMode
+                ? "Use an independent watch callsign and reporting profile. TAK servers and certificates stay on the phone."
+                : "Use an independent watch callsign. Standalone Setup uploads TAK server settings and a P12; the watch disconnects after settings are applied.");
     }
 
     private static Integer tryParseInt(String s) {
@@ -2141,14 +2971,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void clearSessionSettings() {
+        cancelPhoneSettingsHandshake();
         settingsSession.clear();
         garminSettingsTransaction.cancel();
         garminSettingsDraftAtSend = null;
         garminSettingsSnapshotLoaded = false;
         phoneSettingsPushedThisConnection = false;
-        phoneManagedSettingsRequested = false;
+        phoneManagedSettingsRequested = CompanionSettingsPolicy.phoneManaged(setupPurpose, gatewayPurpose);
         settingsModeLoadedThisConnection = false;
-        if (phoneManagedSettingsCB != null) phoneManagedSettingsCB.setChecked(false);
+        if (phoneManagedSettingsCB != null) phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);
         lastSettingsPayload = null;
         lastSettingsApplyResult = null;
         currentServerList = new ArrayList<>();
@@ -2168,11 +2999,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void updateSettingsSendState() {
         if (sendSettingsButton != null) {
             boolean garminMode = connectionModes.getMode() == ConnectionModeController.Mode.GARMIN;
-            sendSettingsButton.setEnabled(garminMode
+            sendSettingsButton.setEnabled(!managementRelease.isPending() && (garminMode
                     ? garminSettingsSnapshotLoaded && garminSettingsLink != null
                             && garminSettingsLink.isCurrent()
                             && !garminSettingsTransaction.isPending()
-                    : settingsSession.canSend() && bleClient != null && bleClient.isConnected());
+                    : !phoneSettingsHandshake.isPending() && settingsSession.canSend()
+                            && bleClient != null && bleClient.isConnected()));
         }
     }
 
@@ -2188,7 +3020,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         mainHandler.post(() -> {
             if (!settingsSession.isCurrent(settingsToken)) return;
             if (!settingsModeLoadedThisConnection) {
-                phoneManagedSettingsRequested = payload.optBoolean("phoneManagedSettings", false);
+                // The selected purpose is desired state; a watch snapshot is only observed state.
+                phoneManagedSettingsRequested = CompanionSettingsPolicy.phoneManaged(setupPurpose, gatewayPurpose);
                 settingsModeLoadedThisConnection = true;
                 if (phoneManagedSettingsCB != null) {
                     phoneManagedSettingsCB.setChecked(phoneManagedSettingsRequested);

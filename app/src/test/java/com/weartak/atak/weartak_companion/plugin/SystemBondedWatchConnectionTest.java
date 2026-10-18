@@ -32,6 +32,52 @@ public class SystemBondedWatchConnectionTest {
                 SystemBondedWatchConnection.describeBondedWatch("ODIN-WEARTAK", "ODIN-WEARTAK", "8C:A3:EC:B6:DD:F5"));
     }
 
+    @Test public void conciseStatesDistinguishBondFromReadyConnection() {
+        assertEquals(SystemBondedWatchConnection.State.NOT_FOUND, controller.getState());
+        transport.known = transport.device;
+        controller.observe();
+        assertEquals(SystemBondedWatchConnection.State.FOUND, controller.getState());
+        controller.start();
+        transport.found();
+        assertEquals(SystemBondedWatchConnection.State.CONNECTING, controller.getState());
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        controller.onConnectionChanged(false);
+        assertEquals(SystemBondedWatchConnection.State.FOUND, controller.getState());
+    }
+
+    @Test public void pausePreservesBondAndBlocksRetriesUntilExplicitStart() {
+        transport.known = transport.device;
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onConnectionChanged(false);
+        Runnable staleRetry = scheduler.first();
+        controller.pause();
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertFalse(controller.isActive());
+        assertSame(transport.device, transport.known);
+        assertTrue(scheduler.pending.isEmpty());
+        staleRetry.run();
+        controller.onConnectionChanged(true);
+        controller.onError("late error");
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertEquals(1, transport.connects);
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        assertEquals(2, transport.connects);
+    }
+
+    @Test public void restoredPauseDoesNotStartDiscoveryOrConnection() {
+        controller.pause();
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertEquals(0, transport.finds);
+        assertEquals(0, transport.connects);
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
     @Test public void startsOnceAndWaitsForTransportReadiness() {
         assertEquals("Samsung Wearable connection stopped", controller.getStatus());
         controller.start();
@@ -157,6 +203,61 @@ public class SystemBondedWatchConnectionTest {
         controller.onConnectionChanged(true);
         assertTrue(status.contains("transport ready"));
         assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void radioOffStopsRetriesAndRadioOnImmediatelyReconnects() {
+        transport.known = transport.device;
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onBluetoothStateChanged(false);
+        assertEquals(SystemBondedWatchConnection.State.BLUETOOTH_OFF, controller.getState());
+        assertTrue(status.contains("Bluetooth disabled"));
+        assertTrue(scheduler.pending.isEmpty());
+        controller.onBluetoothStateChanged(true);
+        assertEquals(2, transport.finds);
+        transport.found();
+        controller.onConnectionChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+    }
+
+    @Test public void radioOffDuringBackoffCancelsStaleRetryAndDiscovery() {
+        controller.start();
+        WearTakBleClient.BondedCompanionListener stale = transport.listener;
+        stale.onUnavailable("GATT unavailable");
+        Runnable oldRetry = scheduler.first();
+        controller.onBluetoothStateChanged(false);
+        oldRetry.run();
+        stale.onFound(transport.device);
+        assertEquals(1, transport.finds);
+        assertEquals(0, transport.connects);
+        assertTrue(scheduler.pending.isEmpty());
+        controller.onBluetoothStateChanged(true);
+        assertEquals(2, transport.finds);
+    }
+
+    @Test public void radioOnDoesNotOverrideManualPause() {
+        controller.start();
+        controller.pause();
+        controller.onBluetoothStateChanged(false);
+        controller.onBluetoothStateChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.PAUSED, controller.getState());
+        assertFalse(controller.isActive());
+        assertEquals(1, transport.finds);
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void repeatedRadioBroadcastDoesNotResetReadyConnection() {
+        controller.start();
+        transport.found();
+        controller.onConnectionChanged(true);
+        controller.onBluetoothStateChanged(true);
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, controller.getState());
+        assertEquals(0, transport.resets);
+        controller.onBluetoothStateChanged(false);
+        controller.onBluetoothStateChanged(false);
+        assertEquals(1, transport.resets);
+        assertEquals(SystemBondedWatchConnection.State.BLUETOOTH_OFF, controller.getState());
     }
 
     @Test public void queuedDiscoveryCallbackCannotReenableStoppedController() {

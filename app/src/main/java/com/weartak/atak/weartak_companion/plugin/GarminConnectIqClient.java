@@ -42,7 +42,11 @@ public final class GarminConnectIqClient {
         boolean appEventsRegistered;
         boolean appInfoPending;
         volatile boolean connected;
+        volatile int routeVersion;
         GarminEntityForwarder.Link entityLink;
+        volatile String relaySession = "";
+        volatile int entitySyncVersion = 1;
+        volatile String watchUid = "";
         long linkGeneration;
         DeviceApp(IQDevice device) {
             this.device = device;
@@ -285,6 +289,11 @@ public final class GarminConnectIqClient {
         Map<String, Object> envelope = new HashMap<>();
         envelope.put("msgType", msgType);
         envelope.put("payload", payload == null ? new HashMap<String, Object>() : payload);
+        if ("route".equals(msgType)
+                && !GarminRouteProtocol.fitsEnvelope(msgType, payload)) {
+            Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + msgType);
+            return false;
+        }
 
         boolean accepted = false;
         for (DeviceApp target : targets) {
@@ -314,6 +323,20 @@ public final class GarminConnectIqClient {
         return accepted;
     }
 
+    synchronized boolean stopOnlyReadyLink(GarminEntityForwarder.Link expected) {
+        List<GarminEntityForwarder.Link> links = entityLinks();
+        if (links.size() != 1 || links.get(0) != expected || !expected.isCurrent()) return false;
+        stop();
+        return true;
+    }
+
+    synchronized boolean sendOnlyReadyLink(GarminEntityForwarder.Link expected,
+            String type, Map<String, Object> payload) {
+        List<GarminEntityForwarder.Link> links = entityLinks();
+        return links.size() == 1 && links.get(0) == expected && expected.isCurrent()
+                && expected.send(type, payload);
+    }
+
     synchronized List<GarminEntityForwarder.Link> entityLinks() {
         List<GarminEntityForwarder.Link> links = new ArrayList<>();
         synchronized (lock) {
@@ -328,12 +351,25 @@ public final class GarminConnectIqClient {
                                         && entry.appEventsRegistered && entry.entityLink == this;
                             }
                         }
+                        @Override public int routeVersion() {
+                            return isCurrent() ? entry.routeVersion : 0;
+                        }
                         @Override public boolean send(String type, Map<String, Object> payload) {
                             synchronized (GarminConnectIqClient.this) {
                                 if (!isCurrent()) return false;
                                 Map<String, Object> envelope = new HashMap<>();
                                 envelope.put("msgType", type);
                                 envelope.put("payload", payload);
+                                if ("route".equals(type)
+                                        && !GarminRouteProtocol.fitsEnvelope(type, payload)) {
+                                    Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + type);
+                                    return false;
+                                }
+                                if (entry.entitySyncVersion >= 2 && ("entity".equals(type)
+                                        || "entities".equals(type) || "entity_remove".equals(type))) {
+                                    if (entry.relaySession.isEmpty()) return false;
+                                    envelope.put("relaySession", entry.relaySession);
+                                }
                                 try {
                                     connectIQ.sendMessage(entry.device, entry.app, envelope,
                                             (device, app, status) -> {
@@ -348,12 +384,34 @@ public final class GarminConnectIqClient {
                                 }
                             }
                         }
+                        @Override public int entitySyncVersion() { return entry.entitySyncVersion; }
+                        @Override public String relaySession() { return entry.relaySession; }
+                        @Override public String watchUid() { return entry.watchUid; }
+                        @Override public boolean sendForSession(String type, Map<String, Object> payload,
+                                String expectedSession) {
+                            synchronized (GarminConnectIqClient.this) {
+                                return entry.relaySession.equals(expectedSession) && send(type, payload);
+                            }
+                        }
                     };
                 }
                 links.add(entry.entityLink);
             }
         }
         return links;
+    }
+
+    synchronized boolean setRouteVersion(GarminEntityForwarder.Link link, int version) {
+        synchronized (lock) {
+            for (DeviceApp entry : devices.values()) {
+                if (entry.entityLink == link && isCurrentDevice(entry) && entry.connected
+                        && entry.appEventsRegistered) {
+                    entry.routeVersion = version == GarminRouteProtocol.VERSION ? version : 0;
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean isCurrentDevice(DeviceApp entry) {
@@ -393,6 +451,7 @@ public final class GarminConnectIqClient {
                     if (entry.connected != connected) {
                         entry.linkGeneration++;
                         entry.entityLink = null;
+                        entry.routeVersion = 0;
                         if (entry.appEventsRegistered && entry.app != null) {
                             try {
                                 connectIQ.unregisterForApplicationEvents(entry.device, entry.app);
@@ -509,6 +568,12 @@ public final class GarminConnectIqClient {
                                 if (item instanceof Map) {
                                     JSONObject envelope = toJsonObject((Map<?, ?>) item);
                                     if (envelope != null && listener != null) {
+                                        if ("relay_hello".equals(envelope.optString("msgType"))) {
+                                            JSONObject hello = envelope.optJSONObject("payload");
+                                            entry.relaySession = hello == null ? "" : hello.optString("relaySession", "");
+                                            entry.entitySyncVersion = hello == null ? 1 : hello.optInt("entitySyncVersion", 1);
+                                            entry.watchUid = hello == null ? "" : hello.optString("watchUid", "");
+                                        }
                                         entityLinks();
                                         listener.onMessageReceived(envelope, entry.entityLink);
                                     }

@@ -1,0 +1,75 @@
+include:
+  - project: 'devsecops/gitlab-ci-common'
+    ref: master
+    file: '/template/build_and_sign.yml'
+
+release_build_and_sign:
+  stage: build
+  extends: .build_and_sign_jdk17
+  before_script:
+    - |
+      case "${CI_DEBUG_TRACE:-false}" in
+        true|TRUE|1)
+          echo "ERROR: Disable CI_DEBUG_TRACE before running authenticated probes"
+          exit 1
+          ;;
+      esac
+    - !reference [.build_and_sign_jdk17, before_script]
+    - |
+      set +x
+      if [ -z "${CI_JOB_ARTIFACTORY_TOKEN:-}" ]; then
+        echo "ERROR: Artifactory token was not created"
+        exit 1
+      fi
+
+      probe() {
+        label="$1"
+        url="$2"
+        if code=$(printf 'header = "Authorization: Bearer %s"\n' \
+          "$CI_JOB_ARTIFACTORY_TOKEN" |
+          curl --config - --silent --show-error \
+            --connect-timeout 15 --max-time 45 \
+            --output /dev/null --write-out '%{http_code}' "$url"); then
+          printf '%s: HTTP %s\n' "$label" "$code"
+        else
+          printf 'ERROR: %s request failed\n' "$label"
+          return 1
+        fi
+      }
+
+      probe 'TAK plugin / maven-release' \
+        'https://artifacts.tak.gov/artifactory/maven-release/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'TAK plugin / maven' \
+        'https://artifacts.tak.gov/artifactory/maven/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'TAK plugin / maven-tooling-local' \
+        'https://artifacts.tak.gov/artifactory/maven-tooling-local/com/atakmap/gradle/atak-gradle-takdev/maven-metadata.xml'
+      probe 'NVD metadata / CI token' \
+        'https://artifacts.tak.gov/artifactory/nvdcve/nvdcve-modified.meta'
+  variables:
+    variants: "civ"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+publish_github_rolling_release:
+  stage: .post
+  image:
+    name: ${TAK_REGISTRY_HOST}/devsecops/gradle-build-launcher:17-${GRADLE_BUILD_LAUNCHER_TAG}
+    entrypoint: [""]
+  needs:
+    - job: release_build_and_sign
+      artifacts: true
+  resource_group: weartak-companion-github-rolling-release
+  variables:
+    GITHUB_REPOSITORY: Ascent-Integrated-Tech/WearTAK-ATAK-Plugin
+  before_script:
+    - |
+      case "${CI_DEBUG_TRACE:-false}" in
+        true|TRUE|1)
+          echo "ERROR: Disable CI_DEBUG_TRACE before publishing authenticated releases"
+          exit 1
+          ;;
+      esac
+  script:
+    - python3 scripts/publish_github_release.py
+  rules:
+    - if: '$CI_SERVER_HOST == "git.tak.gov" && $CI_PROJECT_PATH == "aegorsuch/atak-plugin-weartak-companion" && $CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'

@@ -17,24 +17,39 @@ final class GarminEntityForwarder {
         void subscribe(Consumer<Map<String, Object>> listener, Consumer<String> removed);
         void unsubscribe();
         List<Map<String, Object>> snapshot(int limit);
+        default List<String> excludedUids() { return java.util.Collections.emptyList(); }
+        default void warning(String message) {}
     }
     interface Link {
         boolean isCurrent();
         boolean send(String type, Map<String, Object> payload);
+        default int routeVersion() { return 0; }
+        default int entitySyncVersion() { return 1; }
+        default String relaySession() { return ""; }
+        default String watchUid() { return ""; }
+        default boolean sendForSession(String type, Map<String, Object> payload, String expectedSession) {
+            return relaySession().equals(expectedSession) && send(type, payload);
+        }
     }
     private final Source source;
     private final Supplier<List<Link>> targets;
     private final Consumer<Runnable> schedule;
     private final BooleanSupplier current;
     private final Map<Link, Map<String, Map<String, Object>>> published = new HashMap<>();
+    private final Map<Link, String> sessions = new HashMap<>();
     private static final class Pending {
         final boolean alert;
-        Pending(Map<String, Object> entity) { alert = Boolean.TRUE.equals(entity.get("isAlert")); }
+        Map<String, Object> entity;
+        Pending(Map<String, Object> value) {
+            entity = value;
+            alert = Boolean.TRUE.equals(value.get("isAlert"));
+        }
     }
     private final Map<String, Set<Pending>> pending = new HashMap<>();
     private boolean started;
     private boolean closed;
     private int snapshotSize;
+    private boolean snapshotTruncated;
 
     GarminEntityForwarder(Source source, Supplier<List<Link>> targets,
             Consumer<Runnable> schedule, BooleanSupplier current) {
@@ -57,6 +72,7 @@ final class GarminEntityForwarder {
         if (started) source.unsubscribe();
         started = false;
         published.clear();
+        sessions.clear();
         pending.clear();
     }
 
@@ -64,12 +80,31 @@ final class GarminEntityForwarder {
         if (!active()) return;
         List<Link> links = targets.get();
         published.keySet().removeIf(link -> !link.isCurrent() || !links.contains(link));
+        sessions.keySet().retainAll(published.keySet());
         for (Link link : links) {
+            if (link.entitySyncVersion() >= 2
+                    && (links.size() != 1 || link.relaySession().isEmpty() || link.watchUid().isEmpty())) {
+                if (published.containsKey(link) && link.isCurrent() && !link.relaySession().isEmpty()) {
+                    Map<String, Object> clear = new HashMap<>();
+                    clear.put("entities", java.util.Collections.emptyList());
+                    clear.put("replaceUsers", true);
+                    clear.put("scope", "phone-relay-users");
+                    clear.put("excludedUids", source.excludedUids());
+                    link.send("entities", clear);
+                }
+                published.remove(link);
+                sessions.remove(link);
+                continue;
+            }
+            if (published.containsKey(link) && !link.relaySession().equals(sessions.get(link))) {
+                published.remove(link);
+            }
             if (!link.isCurrent() || published.containsKey(link)) continue;
+            sessions.put(link, link.relaySession());
             published.put(link, new LinkedHashMap<String, Map<String, Object>>(64, .75f, true) {
                 @Override protected boolean removeEldestEntry(
                         Map.Entry<String, Map<String, Object>> eldest) {
-                    return size() > 50;
+                    return link.entitySyncVersion() < 2 && size() > 50;
                 }
             });
             sendSnapshot(link, 50);
@@ -78,52 +113,137 @@ final class GarminEntityForwarder {
 
     synchronized boolean sendSnapshot(Link link, int limit) {
         if (!active() || link == null || !link.isCurrent()) return false;
-        List<Map<String, Object>> snapshot = source.snapshot(Math.max(1, Math.min(limit, 50)));
+        if (link.entitySyncVersion() >= 2 && (targets.get().size() != 1
+                || link.relaySession().isEmpty() || link.watchUid().isEmpty())) return false;
+        int bound = Math.max(1, Math.min(limit, 50));
+        String session = link.relaySession();
+        List<Map<String, Object>> candidates = new ArrayList<>(source.snapshot(bound + 1));
+        boolean truncated = candidates.size() > bound;
+        candidates.removeIf(entity -> !eligible(link, entity));
+        List<Map<String, Object>> snapshot = new ArrayList<>(candidates.subList(0, Math.min(bound, candidates.size())));
         snapshotSize = snapshot.size();
+        snapshotTruncated = truncated;
         Map<String, Object> payload = new HashMap<>();
         payload.put("entities", snapshot);
-        if (!link.send("entities", payload)) return false;
+        if (link.entitySyncVersion() >= 2) {
+            payload.put("replaceUsers", true);
+            payload.put("scope", "phone-relay-users");
+            payload.put("limit", bound);
+            payload.put("truncated", truncated);
+            List<String> excluded = new ArrayList<>(source.excludedUids());
+            if (!link.watchUid().isEmpty()) excluded.add(link.watchUid());
+            payload.put("excludedUids", excluded);
+        }
+        if (!link.sendForSession("entities", payload, session)) return false;
         Map<String, Map<String, Object>> cache = published.get(link);
         if (cache != null) {
+            if (link.entitySyncVersion() >= 2) cache.entrySet().removeIf(e -> isUser(e.getValue()));
             for (Map<String, Object> entity : snapshot) cache.put((String) entity.get("uid"), entity);
+            if (link.entitySyncVersion() >= 2) trimCache(cache);
         }
         return true;
     }
 
     synchronized int snapshotSize() { return snapshotSize; }
+    synchronized boolean snapshotTruncated() { return snapshotTruncated; }
 
     private synchronized void changed(Map<String, Object> entity) {
         if (!active() || entity == null) return;
+        String uid = (String) entity.get("uid");
+        if (isUser(entity)) {
+            Set<Pending> queued = pending.get(uid);
+            if (queued != null) {
+                for (Pending revision : queued) {
+                    if (isUser(revision.entity)) {
+                        if (!older(entity, revision.entity)) revision.entity = entity;
+                        return;
+                    }
+                }
+            } else if (pending.size() >= 512) {
+                source.warning("Garmin pending user capacity reached (512); update omitted");
+                return;
+            }
+        }
         List<Link> captured = new ArrayList<>(targets.get());
         if (captured.isEmpty()) return;
         Pending revision = new Pending(entity);
-        pending.computeIfAbsent((String) entity.get("uid"), uid -> new HashSet<>()).add(revision);
-        schedule.accept(() -> publish(entity, captured, revision));
+        pending.computeIfAbsent(uid, key -> new HashSet<>()).add(revision);
+        Map<Link, String> capturedSessions = new HashMap<>();
+        for (Link link : captured) capturedSessions.put(link, link.relaySession());
+        schedule.accept(() -> publish(revision.entity, captured, capturedSessions, revision));
     }
 
     private synchronized void removed(String uid) {
+        if (!active()) return;
         Set<Pending> queued = pending.get(uid);
         if (queued != null) {
             queued.removeIf(revision -> !revision.alert);
             if (queued.isEmpty()) pending.remove(uid);
         }
-        for (Map<String, Map<String, Object>> cache : published.values()) cache.remove(uid);
+        for (Map.Entry<Link, Map<String, Map<String, Object>>> entry : published.entrySet()) {
+            Link link = entry.getKey();
+            Map<String, Object> previous = entry.getValue().get(uid);
+            if (previous != null && isUser(previous) && link.entitySyncVersion() >= 2
+                    && link.isCurrent() && targets.get().size() == 1) {
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("uid", uid);
+                payload.put("scope", "phone-relay-users");
+                if (previous.get("time") instanceof String) payload.put("time", previous.get("time"));
+                if (!link.sendForSession("entity_remove", payload, sessions.get(link))) continue;
+            }
+            entry.getValue().remove(uid);
+        }
     }
 
-    private synchronized void publish(Map<String, Object> entity, List<Link> captured, Pending revision) {
+    private synchronized void publish(Map<String, Object> entity, List<Link> captured,
+            Map<Link, String> capturedSessions, Pending revision) {
         String uid = (String) entity.get("uid");
         Set<Pending> queued = pending.get(uid);
         if (!active() || queued == null || !queued.remove(revision)) return;
         if (queued.isEmpty()) pending.remove(uid);
         for (Link link : captured) {
             if (!link.isCurrent()) continue;
+            if (!link.relaySession().equals(capturedSessions.get(link))) continue;
+            if (link.entitySyncVersion() >= 2 && targets.get().size() != 1) continue;
             Map<String, Map<String, Object>> cache = published.get(link);
             if (cache == null) continue;
+            if (!eligible(link, entity)) continue;
             Map<String, Object> previous = cache.get(uid);
             if (entity.equals(previous) || older(entity, previous)) continue;
+            if (isUser(entity) && previous == null
+                    && cache.values().stream().filter(GarminEntityForwarder::isUser).count() >= 50
+                    && link.entitySyncVersion() >= 2) {
+                sendSnapshot(link, 50);
+                continue;
+            }
             // Acceptance means SDK handoff only, never an acknowledgement from the watch.
-            if (link.send("entity", new HashMap<>(entity))) cache.put(uid, entity);
+            if (link.sendForSession("entity", new HashMap<>(entity), capturedSessions.get(link))) {
+                cache.put(uid, entity);
+                if (link.entitySyncVersion() >= 2) trimCache(cache);
+            }
         }
+    }
+
+    private static boolean isUser(Map<String, Object> entity) {
+        return Boolean.TRUE.equals(entity.get("isUser"));
+    }
+
+    private static void trimCache(Map<String, Map<String, Object>> cache) {
+        java.util.Iterator<Map.Entry<String, Map<String, Object>>> entries = cache.entrySet().iterator();
+        while (entries.hasNext() && cache.size() > 100) {
+            if (!isUser(entries.next().getValue())) entries.remove();
+        }
+    }
+
+    private boolean eligible(Link link, Map<String, Object> entity) {
+        if (!isUser(entity)) return true;
+        Object uid = entity.get("uid");
+        if (link.entitySyncVersion() >= 2 && (link.watchUid().isEmpty()
+                || source.excludedUids().stream().noneMatch(id -> id != null && !id.isEmpty()))) {
+            source.warning("Garmin user relay requires known phone and watch UIDs");
+            return false;
+        }
+        return !link.watchUid().equals(uid) && !source.excludedUids().contains(uid);
     }
 
     private static boolean older(Map<String, Object> next, Map<String, Object> previous) {

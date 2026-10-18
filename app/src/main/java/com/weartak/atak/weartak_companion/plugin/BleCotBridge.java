@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.atakmap.android.chat.ChatManagerMapComponent;
 import com.atakmap.android.contact.Contact;
@@ -39,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class BleCotBridge {
 
@@ -46,6 +48,7 @@ public class BleCotBridge {
 
     private final CotDispatcher externalCotDispatcher;
     private final CotDispatcher internalCotDispatcher;
+    private final SessionTaskQueue cotQueue = new SessionTaskQueue();
 
     private MapView mapView;
     private String myUid;
@@ -57,6 +60,8 @@ public class BleCotBridge {
     private volatile WearTakBleClient bleClient;
     private GarminConnectIqClient garminClient;
     private ChatManagerMapComponent chatManager;
+    private Consumer<Bundle> gatewayChatForwarder;
+    private Consumer<Runnable> watchChatSend = Runnable::run;
     private final ChatManagerMapComponent.ChatMessageListener chatMessageListener =
             this::forwardChatToWatch;
 
@@ -70,12 +75,14 @@ public class BleCotBridge {
     }
 
     public synchronized void startChatForwarding(WearTakBleClient client) {
+        cotQueue.start();
         bleClient = client;
         garminClient = null;
         registerChatListener();
     }
 
     public synchronized void startChatForwarding(GarminConnectIqClient client) {
+        cotQueue.start();
         garminClient = client;
         bleClient = null;
         registerChatListener();
@@ -94,6 +101,8 @@ public class BleCotBridge {
     }
 
     public synchronized void stopChatForwarding() {
+        cotQueue.stop();
+        gatewayChatForwarder = null;
         if (chatManager != null) {
             chatManager.removeChatMessageListener(chatMessageListener);
             chatManager = null;
@@ -102,15 +111,57 @@ public class BleCotBridge {
         garminClient = null;
     }
 
-    private synchronized void forwardChatToWatch(Bundle message) {
+    void discardPendingCot() {
+        cotQueue.invalidate();
+    }
+
+    synchronized void startGatewayChatForwarding(Consumer<Bundle> forwarder) {
+        gatewayChatForwarder = forwarder;
+        registerChatListener();
+    }
+
+    synchronized void stopGatewayChatForwarding() {
+        gatewayChatForwarder = null;
+        if (bleClient == null && garminClient == null && chatManager != null) {
+            chatManager.removeChatMessageListener(chatMessageListener);
+            chatManager = null;
+        }
+    }
+
+    void forwardGatewayCot(String xml) {
+        CotEvent event = GatewayCot.validate(xml);
+        if (internalCotDispatcher == null || externalCotDispatcher == null) {
+            throw new IllegalStateException("ATAK CoT dispatchers unavailable");
+        }
+        Bundle extras = new Bundle();
+        extras.putBoolean(PhoneMarkerMapRelay.WATCH_IMPORT, true);
+        internalCotDispatcher.dispatch(event, extras);
+        externalCotDispatcher.dispatch(event);
+    }
+
+    private void forwardChatToWatch(Bundle message) {
         if (message == null) return;
         String senderUid = message.getString("senderUid");
         String messageId = message.getString("messageId");
         String senderCallsign = message.getString("senderCallsign");
         String text = message.getString("message");
 
-        WearTakBleClient client = bleClient;
-        GarminConnectIqClient garmin = garminClient;
+        final WearTakBleClient client;
+        final GarminConnectIqClient garmin;
+        final Consumer<Bundle> gatewayForwarder;
+        synchronized (this) {
+            client = bleClient;
+            garmin = garminClient;
+            gatewayForwarder = gatewayChatForwarder;
+        }
+        if (client == null && garmin == null && gatewayForwarder == null) return;
+        if (gatewayForwarder != null) {
+            try {
+                gatewayForwarder.accept(new Bundle(message));
+            } catch (RuntimeException e) {
+                Log.e(TAG, "Failed to relay ATAK chat to Gateway watches", e);
+            }
+        }
         if (client == null && garmin == null) return;
 
         try {
@@ -126,6 +177,8 @@ public class BleCotBridge {
                     : client.writeJsonLineToWatch(envelope.toString(), client.getReadySession());
             if (!handedOff) {
                 Log.w(TAG, "Could not relay ATAK chat message to watch");
+            } else {
+                Log.d(TAG, "ATAK chat queued for watch; delivery not confirmed");
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to relay ATAK chat message to watch", e);
@@ -215,6 +268,12 @@ public class BleCotBridge {
     // DISPATCH (internal + external)
     // =========================================================================================
     private void dispatchCot(String label, String xml) {
+        if (!cotQueue.submit(() -> dispatchCotOnWorker(label, xml))) {
+            Log.w(TAG, "dispatchCot(" + label + "): connection session stopped");
+        }
+    }
+
+    private void dispatchCotOnWorker(String label, String xml) {
         if (xml == null || xml.isEmpty()) {
             Log.w(TAG, "dispatchCot(" + label + "): empty xml");
             return;
@@ -293,21 +352,17 @@ public class BleCotBridge {
             // Point fields (marker payload has these)
             EudFix eudFix = getEudFix();
 
-            double lat = eudFix.lat;
-            double lon = eudFix.lon;
-            double hae = eudFix.hae;
-            double ce  = eudFix.ce;
-            double le  = eudFix.le;
+            WatchPointLocation location = new WatchPointLocation(p, eudFix.lat, eudFix.lon,
+                    eudFix.hae, eudFix.ce, eudFix.le);
+            double lat = location.lat;
+            double lon = location.lon;
+            double hae = location.hae;
+            double ce = location.ce;
+            double le = location.le;
 
             String callsign = pluginCallsign;
             if (watchAsSource || usePayloadLocation) {
-                // use watch callsign & location fix, fallback to this device on null
                 callsign = optString(p, "cs", pluginCallsign);
-                lat = optDouble(p, "lat", lat);
-                lon = optDouble(p, "lon", lon);
-                hae = optDouble(p, "hae", hae);
-                ce  = optDouble(p, "ce", ce);
-                le  = optDouble(p, "le", le);
             }
 
             Integer batteryPct = optIntNullable(p, "bat");
@@ -370,11 +425,11 @@ public class BleCotBridge {
             String remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
             detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>");
             if (null == title || title.isEmpty()) {
-                title = escapeXml(buildMarkerCallsign(callsign, time));
+                title = buildMarkerCallsign(callsign, time);
             }
             // <contact callsign="WEAROS-1075_161710Z"/>
             detail.append("<contact callsign=\"")
-                    .append(title)
+                    .append(escapeXml(title))
                     .append("\"/>");
 
             // Build final XML
@@ -511,7 +566,7 @@ public class BleCotBridge {
             int bat = optInt(p, "bat", -1);
 
             // Self info for link (required by Emergency ingest)
-            String selfUid = optString(p, "uid", "WEAROS-UNKNOWN");
+            String selfUid = watchAsSource ? optString(p, "uid", "WEAROS-UNKNOWN") : myUid;
             String deviceType = mapView.getMapData().getMetaString(
                     "deviceType",
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
@@ -577,7 +632,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign  = optString(p, "callsign", "WEAROS-TEST");
+            String callsign = watchAsSource ? optString(p, "callsign", pluginCallsign) : pluginCallsign;
 
             EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
 
@@ -620,6 +675,10 @@ public class BleCotBridge {
         return manager;
     }
 
+    void setWatchChatSend(Consumer<Runnable> sender) {
+        watchChatSend = sender;
+    }
+
     public void sendChat(String envelopeJson) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             if (!new Handler(Looper.getMainLooper()).post(() -> sendChat(envelopeJson))) {
@@ -636,7 +695,7 @@ public class BleCotBridge {
             }
 
             ChatReplyPayload reply = new ChatReplyPayload(p);
-            ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text,
+            watchChatSend.accept(() -> ChatReplyRouter.route(reply.roomUid, reply.isGroup, reply.text,
                     new ChatReplyRouter.Targets<Contact>() {
                         public Contact find(String uid) {
                             Contact target = Contacts.getInstance().getContactByUuid(uid);
@@ -694,10 +753,14 @@ public class BleCotBridge {
                             if (all == null) throw new IllegalStateException("ATAK broadcast contact unavailable");
                             requireChatManager().sendMessage(text, java.util.Collections.singletonList(all));
                         }
-                    });
+                    }));
+            Log.d(TAG, "Watch chat handed to ATAK; recipient delivery not confirmed");
 
         } catch (Exception e) {
             Log.e(TAG, "Error in sendChat(json)", e);
+            Toast.makeText(mapView.getContext(),
+                    "Unable to send watch chat through ATAK. Check the destination and connection.",
+                    Toast.LENGTH_LONG).show();
         }
     }
 

@@ -15,7 +15,7 @@ final class TraditionalBleReconnect {
 
     private final SystemBondedWatchConnection.Scheduler scheduler;
     private final Transport transport;
-    private boolean running, allowed, enabled, ready, retrying, awaiting;
+    private boolean running, allowed, ready, retrying, awaiting;
     private String target;
     private long generation;
     private int failures, missed;
@@ -26,14 +26,13 @@ final class TraditionalBleReconnect {
         this.transport = transport;
     }
 
-    void start(boolean enabled, boolean allowed) {
-        start(enabled, allowed, null);
+    void start(boolean allowed) {
+        start(allowed, null);
     }
 
-    void start(boolean enabled, boolean allowed, String previouslyReadyPeer) {
+    void start(boolean allowed, String previouslyReadyPeer) {
         stop();
         running = true;
-        this.enabled = enabled;
         this.allowed = allowed;
         target = previouslyReadyPeer;
         resume();
@@ -54,15 +53,6 @@ final class TraditionalBleReconnect {
     void setAllowed(boolean allowed) {
         this.allowed = allowed;
         if (!allowed) disarm();
-    }
-
-    void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-        cancel();
-        awaiting = retrying = false;
-        failures = missed = 0;
-        if (ready) scheduleHealth();
-        else resume();
     }
 
     void onReady(String address) {
@@ -96,7 +86,7 @@ final class TraditionalBleReconnect {
     boolean isRetrying() { return retrying; }
 
     private boolean eligible() {
-        return running && allowed && enabled && target != null;
+        return running && allowed && target != null;
     }
 
     private void scheduleRetry() {

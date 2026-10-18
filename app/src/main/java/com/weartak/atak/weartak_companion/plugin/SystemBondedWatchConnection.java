@@ -5,6 +5,13 @@ package com.weartak.atak.weartak_companion.plugin;
  * calls run on the supplied main-thread scheduler. This route never creates or removes bonds.
  */
 public final class SystemBondedWatchConnection {
+    public enum State {
+        NOT_FOUND("Not Found"), FOUND("Found"), CONNECTING("Connecting"),
+        CONNECTED("Connected"), PAUSED("Paused"), BLUETOOTH_OFF("Bluetooth Off");
+
+        public final String label;
+        State(String label) { this.label = label; }
+    }
     public interface Scheduler {
         void execute(Runnable action);
         void later(Runnable action, long delayMs);
@@ -33,6 +40,8 @@ public final class SystemBondedWatchConnection {
     private boolean attempting;
     private boolean connecting;
     private boolean ready;
+    private boolean paused;
+    private boolean bluetoothAvailable = true;
     private long generation;
     private long retryDelay = 2000;
     private Runnable retry;
@@ -61,6 +70,7 @@ public final class SystemBondedWatchConnection {
             if (running) stopInternal();
             running = true;
             active = true;
+            paused = false;
             retryDelay = 2000;
             attempt();
         });
@@ -79,6 +89,14 @@ public final class SystemBondedWatchConnection {
     /** Stops discovery, GATT setup, and retries, including already queued callbacks. */
     public void stop() {
         scheduler.execute(this::stopInternal);
+    }
+
+    /** Pauses ATAK's route only; Android and Galaxy Wearable bonds remain untouched. */
+    public void pause() {
+        scheduler.execute(() -> {
+            paused = true;
+            stopInternal();
+        });
     }
 
     private void stopInternal() {
@@ -113,12 +131,37 @@ public final class SystemBondedWatchConnection {
         });
     }
 
+    public void onBluetoothStateChanged(boolean available) {
+        scheduler.execute(() -> {
+            if (bluetoothAvailable == available) return;
+            bluetoothAvailable = available;
+            if (!running) return;
+            ++generation;
+            cancelTimers();
+            attempting = connecting = ready = false;
+            transport.reset();
+            if (!available) {
+                updateStatus("Samsung Wearable: Bluetooth disabled");
+            } else {
+                retryDelay = 2000;
+                attempt();
+            }
+        });
+    }
+
     public String getStatus() { return status; }
     public boolean isActive() { return active; }
+    public State getState() {
+        if (paused) return State.PAUSED;
+        if (!bluetoothAvailable) return State.BLUETOOTH_OFF;
+        if (ready) return State.CONNECTED;
+        if (connecting) return State.CONNECTING;
+        return candidate != null ? State.FOUND : State.NOT_FOUND;
+    }
     public WearTakBleClient.DiscoveredDevice getCandidate() { return candidate; }
 
     private void attempt() {
-        if (!running) return;
+        if (!running || !bluetoothAvailable) return;
         retry = null;
         final long token = ++generation;
         attempting = true;
