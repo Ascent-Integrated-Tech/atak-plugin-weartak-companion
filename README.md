@@ -414,6 +414,10 @@ _________________________________________________________________
 REPOSITORIES
 
 The TAK Forge repository is canonical; GitHub is secondary.
+The canonical `develop` pipeline can publish signed CIV builds to a stable
+GitHub release. See
+[docs/github-release-publishing.md](docs/github-release-publishing.md) for the
+protected-token setup and publication behavior.
 
 _________________________________________________________________
 PORTS REQUIRED

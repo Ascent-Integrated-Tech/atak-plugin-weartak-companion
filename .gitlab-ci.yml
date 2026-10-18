@@ -49,3 +49,27 @@ release_build_and_sign:
     variants: "civ"
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
+
+publish_github_rolling_release:
+  stage: .post
+  image:
+    name: ${TAK_REGISTRY_HOST}/devsecops/gradle-build-launcher:17-${GRADLE_BUILD_LAUNCHER_TAG}
+    entrypoint: [""]
+  needs:
+    - job: release_build_and_sign
+      artifacts: true
+  resource_group: weartak-companion-github-rolling-release
+  variables:
+    GITHUB_REPOSITORY: Ascent-Integrated-Tech/WearTAK-ATAK-Plugin
+  before_script:
+    - |
+      case "${CI_DEBUG_TRACE:-false}" in
+        true|TRUE|1)
+          echo "ERROR: Disable CI_DEBUG_TRACE before publishing authenticated releases"
+          exit 1
+          ;;
+      esac
+  script:
+    - python3 scripts/publish_github_release.py
+  rules:
+    - if: '$CI_SERVER_HOST == "git.tak.gov" && $CI_PROJECT_PATH == "aegorsuch/atak-plugin-weartak-companion" && $CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'
