@@ -22,6 +22,21 @@ async function createReleaseTestIssue({ github, context, core, tester }) {
       (issue) => !issue.pull_request && (issue.body || '').includes(marker),
     );
     if (existing) {
+      if (existing.state === 'open' && !existing.assignees.some(
+        (assignee) => assignee.login.toLowerCase() === tester.toLowerCase(),
+      )) {
+        await github.rest.issues.checkUserCanBeAssigned({ ...repo, assignee: tester });
+        const { data: assigned } = await github.rest.issues.addAssignees({
+          ...repo, issue_number: existing.number, assignees: [tester],
+        });
+        if (!assigned.assignees.some(
+          (assignee) => assignee.login.toLowerCase() === tester.toLowerCase(),
+        )) {
+          throw new Error(`Checklist ${assigned.html_url} is still not assigned to ${tester}.`);
+        }
+        core.info(`Assigned release checklist: ${assigned.html_url}`);
+        return assigned;
+      }
       core.info(`Checklist already exists: ${existing.html_url}`);
       return existing;
     }
