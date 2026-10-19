@@ -520,10 +520,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         selectedDevice = device;
         bleClient.resetSession("UI connect " + device.address);
         currentConnectedAddress = device.address;
-        bleClient.connectToSelectedDevice(device);
 
         if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
         setConnectionStatus("Connecting WearTAK watch...");
+        bleClient.connectToSelectedDevice(device);
     }
 
     // ------------------ Plugin lifecycle ------------------
@@ -869,6 +869,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (!connectionModes.isCurrent(token)) return;
                     if (systemBondedConnection != null) systemBondedConnection.onError(msg);
                     updateSystemBondedControl();
+                    if (!bleClient.isConnected() && deviceAdapter != null) {
+                        deviceAdapter.clearConnectionMarkers();
+                        refreshDeviceListUi();
+                    }
                     if (connectionStatusTV != null && !bleClient.isConnected()) {
                         setConnectionStatus(
                                 systemBondedConnection != null && systemBondedConnection.isActive()

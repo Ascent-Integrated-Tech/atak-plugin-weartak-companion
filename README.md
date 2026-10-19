@@ -25,6 +25,26 @@ The phone checks location permissions and provider state explicitly. When allowe
 
 TRADITIONAL BLE AUTOMATIC RECONNECT
 
+Issue #16: a watch restarting its companion GATT service can report Services
+Changed before the first notification subscription completes. Traditional BLE
+now closes that stale GATT session and permits one fresh connection to the same
+already-bonded, manually selected peer after two seconds. This setup-only retry
+has a 30-second watchdog (normal setup remains limited to 25 seconds) and does
+not persist or arm ongoing reconnect until notification subscription succeeds.
+Failure or another service change before readiness ends that one-shot recovery;
+Connect can be retried manually. Scan, Disconnect, trust loss, and mode teardown
+cancel it. Samsung retains its own retry owner.
+
+Setup errors clear the device row's Connecting state even if transport readiness
+was never reached. No bond is created/removed by service-change recovery and no
+different watch is selected by name. Scan results still require a live A11A
+advertisement; this phone-side fix cannot make a stopped watch advertise.
+Hardware acceptance: toggle WearTAK companion mode off/on, select the watch, and
+verify readiness or an actionable error within the bounded setup/recovery window,
+then retry Connect without rescanning. Repeat with Disconnect, Scan, Bluetooth
+off/on, and mode changes while recovery is pending; ensure no late reconnect and
+the original Android/Galaxy Wearable bond remains intact.
+
 Canonical develop at c6cd9d1 had no Traditional BLE user-toggle automatic reconnect:
 `WearTakBleClient.start()` explicitly initialized with no auto-connect, and
 `main_layout.xml`/`WearTakPlugin` had no automatic-reconnect checkbox. Samsung

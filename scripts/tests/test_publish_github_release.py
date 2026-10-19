@@ -154,6 +154,23 @@ class RollingReleaseTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def test_release_writes_use_current_repository_name_without_redirects(self) -> None:
+        self.assertEqual(
+            publisher.EXPECTED_GITHUB_REPOSITORY,
+            "Ascent-Integrated-Tech/atak-plugin-weartak-companion",
+        )
+        config = (Path(__file__).resolve().parents[2] / ".gitlab-ci.yml").read_text()
+        self.assertIn(
+            f"GITHUB_REPOSITORY: {publisher.EXPECTED_GITHUB_REPOSITORY}", config
+        )
+        github = publisher.GitHubClient(publisher.EXPECTED_GITHUB_REPOSITORY, "test-token")
+        with patch.object(github, "json_request", return_value=(200, {})) as request:
+            github.update_release_body(77, "verified notes")
+        self.assertEqual(request.call_args.args, (
+            "PATCH",
+            "/repos/Ascent-Integrated-Tech/atak-plugin-weartak-companion/releases/77",
+        ))
+
     def test_publishes_only_current_signed_civ_release_asset(self) -> None:
         make_apk(
             self.directory,

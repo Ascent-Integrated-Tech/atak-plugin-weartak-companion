@@ -21,7 +21,7 @@ from typing import Any
 EXPECTED_PROJECT = "aegorsuch/atak-plugin-weartak-companion"
 EXPECTED_SERVER = "git.tak.gov"
 EXPECTED_BRANCH = "develop"
-EXPECTED_GITHUB_REPOSITORY = "Ascent-Integrated-Tech/WearTAK-ATAK-Plugin"
+EXPECTED_GITHUB_REPOSITORY = "Ascent-Integrated-Tech/atak-plugin-weartak-companion"
 RELEASE_TAG = "tak-gov-ci-cd-pipeline"
 RELEASE_TITLE = "TAK.gov CI/CD Pipeline Release"
 ASSET_PREFIX = "WearTAK-ATAK-Plugin-civ-release-pipeline-"

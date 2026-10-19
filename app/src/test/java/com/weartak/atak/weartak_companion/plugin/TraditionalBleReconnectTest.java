@@ -77,6 +77,96 @@ public class TraditionalBleReconnectTest {
         assertTrue(scheduler.pending.isEmpty());
     }
 
+    @Test public void initialServiceChangeRetriesSelectedBondedPeerOnceWithoutArmingOngoingRetries() {
+        controller.start(true);
+        assertTrue(controller.onServiceChanged("selected-bonded-watch"));
+        assertEquals(2000, scheduler.delay());
+        scheduler.fire();
+        assertEquals("selected-bonded-watch", transport.address);
+        assertEquals(30000, scheduler.delay());
+        controller.onLoss();
+        controller.resume();
+        assertFalse(controller.onServiceChanged("selected-bonded-watch"));
+        assertTrue(scheduler.pending.isEmpty());
+        assertEquals(1, transport.connects);
+    }
+
+    @Test public void initialServiceChangeWatchdogClosesAttemptAndDoesNotLoop() {
+        controller.start(true);
+        controller.onServiceChanged("selected-bonded-watch");
+        scheduler.fire();
+        scheduler.fire();
+        assertEquals(1, transport.resets);
+        assertFalse(controller.isRetrying());
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void repeatedServiceChangeDuringInitialRetryCannotCreateAnotherAttempt() {
+        controller.start(true);
+        controller.onServiceChanged("selected-bonded-watch");
+        scheduler.fire();
+        assertFalse(controller.onServiceChanged("selected-bonded-watch"));
+        controller.onLoss();
+        controller.resume();
+        assertEquals(1, transport.connects);
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void rejectedInitialServiceChangeConnectDoesNotRetryForever() {
+        controller.start(true);
+        transport.connectAccepted = false;
+        controller.onServiceChanged("selected-bonded-watch");
+        scheduler.fire();
+        assertFalse(controller.isRetrying());
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void serviceChangeRecoveryReadinessArmsNormalHealthAndReconnect() {
+        controller.start(true);
+        controller.onServiceChanged("selected-bonded-watch");
+        scheduler.fire();
+        controller.onReady("selected-bonded-watch");
+        assertEquals(30000, scheduler.delay());
+        assertTrue(controller.onServiceChanged("selected-bonded-watch"));
+        assertEquals(2000, scheduler.delay());
+        scheduler.fire();
+        controller.onLoss();
+        assertEquals(60000, scheduler.delay());
+    }
+
+    @Test public void manualDisconnectScanAndModeChangesCancelServiceChangeRecovery() {
+        for (int action = 0; action < 4; action++) {
+            controller.start(true);
+            assertTrue(controller.onServiceChanged("selected-bonded-watch"));
+            Runnable stale = scheduler.first();
+            if (action == 0) controller.disarm();
+            else if (action == 1) controller.pause();
+            else if (action == 2) controller.setAllowed(false);
+            else controller.stop();
+            stale.run();
+            controller.resume();
+            assertTrue(scheduler.pending.isEmpty());
+        }
+        assertEquals(0, transport.connects);
+    }
+
+    @Test public void serviceChangeDoesNotStartTraditionalRecoveryInOtherModes() {
+        controller.start(false);
+        assertFalse(controller.onServiceChanged("bonded-watch"));
+        controller.stop();
+        assertFalse(controller.onServiceChanged("bonded-watch"));
+        assertTrue(scheduler.pending.isEmpty());
+    }
+
+    @Test public void newManualSelectionResetsBoundedServiceChangeAllowance() {
+        controller.start(true);
+        controller.onServiceChanged("first-watch");
+        controller.disarm();
+        assertTrue(controller.onServiceChanged("second-watch"));
+        scheduler.fire();
+        assertEquals("second-watch", transport.address);
+    }
+
     @Test public void unexpectedLossStartsAtTwoSecondsThenSixtySecondsAfterFailure() {
         ready();
         controller.onLoss();

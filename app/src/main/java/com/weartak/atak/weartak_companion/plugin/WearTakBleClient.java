@@ -265,11 +265,11 @@ public class WearTakBleClient {
 
     private void failSecureSession(String msg, String reason) {
         final long token = sessionGeneration;
-        error(msg);
         runOnMain(() -> {
             if (token != sessionGeneration || !started) return;
             resetSession(reason);
             reconnect.onLoss();
+            error(msg);
         });
     }
 
@@ -1150,7 +1150,21 @@ public class WearTakBleClient {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
 
         @Override public void onServiceChanged(BluetoothGatt gatt) {
-            dispatchGatt(gatt, () -> failSecureSession("Watch services changed", "service_changed"));
+            dispatchGatt(gatt, () -> {
+                BluetoothDevice peer = gatt.getDevice();
+                if (!hasConnectPermission() || !isBonded(peer)) {
+                    failSecureSession("Watch services changed without an existing bond", "service_changed");
+                    return;
+                }
+                String address = peer.getAddress();
+                resetSession("service_changed");
+                if (reconnect.onServiceChanged(address)) {
+                    error("Watch services changed; retrying the same bonded watch");
+                } else {
+                    reconnect.onLoss();
+                    error("Watch services changed; connection setup stopped. Retry Connect.");
+                }
+            });
         }
 
         @Override

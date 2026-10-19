@@ -60,7 +60,7 @@ publish_github_rolling_release:
       artifacts: true
   resource_group: weartak-companion-github-rolling-release
   variables:
-    GITHUB_REPOSITORY: Ascent-Integrated-Tech/WearTAK-ATAK-Plugin
+    GITHUB_REPOSITORY: Ascent-Integrated-Tech/atak-plugin-weartak-companion
   before_script:
     - |
       case "${CI_DEBUG_TRACE:-false}" in
