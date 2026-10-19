@@ -46,3 +46,49 @@ No GitHub release/tag or CI variable is created by this source change. The first
 release is created against the pre-created fixed tag by the first eligible
 successful pipeline after the variable is configured and the change is merged
 to canonical `develop`.
+
+## Automatic tester checklist
+
+The GitHub Actions workflow `.github/workflows/release-testing.yml` creates an
+issue assigned to the explicitly configured tester when a release is published,
+including a prerelease. It runs only for `release: published`, not release edits
+or asset uploads. Each release ID receives one checklist; rerunning a successful
+workflow does not recreate it, even after the issue is closed.
+
+**Rolling-release limitation:** the existing TAK.gov publisher updates the same
+release. Subsequent pipeline APK replacements do not publish a new release and
+therefore do not trigger this workflow. Its initial publication may also precede
+the first APK upload. This workflow does not provide per-pipeline notification
+for the rolling release; that would require separately authorized update-event
+handling or separately published releases.
+
+Issues include a snapshot of the release notes and the checklist in
+[`release-test-checklist.md`](release-test-checklist.md). Edit that file to update
+future test assignments. The workflow reads its helper and checklist from the
+repository default branch, not the release tag. Notification delivery follows
+the tester's GitHub notification settings; no email or messaging integration is
+configured.
+
+Before enabling:
+
+- Merge these files into GitHub's default branch (`develop`) and enable Actions
+  and Issues for the repository.
+- Have a maintainer explicitly authorize the recipient by setting the repository
+  Actions variable `RELEASE_TESTER` to the tester's GitHub username (without `@`).
+  No recipient is configured by this source change.
+- Grant that tester repository access and verify they are eligible for issue
+  assignment. The workflow fails visibly before issue creation if configuration
+  or eligibility checks fail; it does not silently create an unassigned issue.
+- Allow the workflow's `GITHUB_TOKEN` to read contents and write issues. No new
+  secret or additional permission for the TAK.gov publisher token is needed.
+  Release events must come from a user/token or GitHub App, as the existing
+  external TAK.gov publisher does; releases made using another workflow's
+  `GITHUB_TOKEN` do not trigger this workflow.
+
+This source change does not grant access, alter notification preferences, or
+create a live test issue. After merging, authorizing the recipient, and granting
+access, publish a release. Check **Release testing checklist** in Actions and
+the assigned issue. A failed run can be rerun once the access or configuration
+problem is resolved.
+
+Local helper checks: `node --test scripts/tests/test_create_release_test_issue.cjs`.

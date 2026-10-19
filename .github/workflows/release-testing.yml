@@ -1,0 +1,33 @@
+name: Release testing checklist
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: release-testing-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: ${{ !github.event.release.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Assign release checklist
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea9 # v7
+        env:
+          RELEASE_TESTER: ${{ vars.RELEASE_TESTER }}
+        with:
+          script: |
+            const { createReleaseTestIssue } = require('./scripts/create_release_test_issue.cjs');
+            await createReleaseTestIssue({
+              github, context, core, tester: process.env.RELEASE_TESTER,
+            });
