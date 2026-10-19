@@ -2,7 +2,8 @@ package com.weartak.atak.weartak_companion.plugin;
 
 /**
  * Traditional BLE only. Timers and transport callbacks run on the client's main thread.
- * Only a services-ready bonded peer can arm retries; never discovers or pairs a new identity.
+ * Only a services-ready bonded peer can arm ongoing retries. A service change during
+ * initial setup permits one bounded retry of the same bonded peer, never discovery/pairing.
  */
 final class TraditionalBleReconnect {
     interface Transport {
@@ -16,6 +17,7 @@ final class TraditionalBleReconnect {
     private final SystemBondedWatchConnection.Scheduler scheduler;
     private final Transport transport;
     private boolean running, allowed, ready, retrying, awaiting;
+    private boolean setupRecoveryAttempted, setupOnly;
     private String target;
     private long generation;
     private int failures, missed;
@@ -45,6 +47,7 @@ final class TraditionalBleReconnect {
 
     void disarm() {
         target = null;
+        setupRecoveryAttempted = setupOnly = false;
         ready = retrying = awaiting = false;
         failures = missed = 0;
         cancel();
@@ -58,6 +61,7 @@ final class TraditionalBleReconnect {
     void onReady(String address) {
         cancel();
         target = address;
+        setupOnly = false;
         ready = true;
         retrying = awaiting = false;
         failures = missed = 0;
@@ -66,13 +70,36 @@ final class TraditionalBleReconnect {
 
     void onLoss() {
         cancel();
+        if (setupOnly) {
+            target = null;
+            setupOnly = false;
+        }
         ready = awaiting = retrying = false;
         missed = 0;
         resume();
     }
 
+    boolean onServiceChanged(String bondedAddress) {
+        if (!running || !allowed || bondedAddress == null) return false;
+        if (target != null && !setupOnly) {
+            onLoss();
+            return true;
+        }
+        if (setupRecoveryAttempted) return false;
+        setupRecoveryAttempted = setupOnly = true;
+        target = bondedAddress;
+        ready = awaiting = false;
+        failures = 0;
+        resume();
+        return true;
+    }
+
     void pause() {
         cancel();
+        if (setupOnly) {
+            target = null;
+            setupOnly = false;
+        }
         ready = retrying = awaiting = false;
         failures = 0;
     }

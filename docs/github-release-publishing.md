@@ -30,10 +30,16 @@ usable.
 
 ## GitLab setup
 
+The publisher and CI repository setting must use the current GitHub name
+`Ascent-Integrated-Tech/atak-plugin-weartak-companion`. The former
+`WearTAK-ATAK-Plugin` name redirects: reads may work, but release metadata PATCH
+requests can fail with HTTP 307. Do not work around this by forwarding
+authenticated writes to arbitrary redirect destinations.
+
 Before enabling the publisher, create `GITHUB_RELEASE_TOKEN` as a masked and
 protected CI/CD variable in the canonical
 `aegorsuch/atak-plugin-weartak-companion` project. Use a GitHub fine-grained
-token restricted to `Ascent-Integrated-Tech/WearTAK-ATAK-Plugin` with only
+token restricted to `Ascent-Integrated-Tech/atak-plugin-weartak-companion` with only
 **Contents: read and write** permission. The `develop` branch must remain
 protected so GitLab supplies the token only to its protected pipeline. The CI
 image must provide Python 3 and Android
