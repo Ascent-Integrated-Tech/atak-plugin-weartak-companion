@@ -29,6 +29,8 @@ class FakeGitHub:
         self.uploaded: dict[str, bytes] = {}
         self.verification_failure = False
         self.release_creations = 0
+        self.test_notifications: list[dict[str, Any]] = []
+        self.dispatch_failure = False
 
     def require_existing_tag(self) -> None:
         if not self.tag_exists:
@@ -84,6 +86,15 @@ class FakeGitHub:
     def delete_asset(self, asset_id: int) -> None:
         self.deleted.append(asset_id)
         self.assets = [item for item in self.assets if item["id"] != asset_id]
+
+    def dispatch_release_test(self, release_id: int, pipeline_id: str, body: str) -> None:
+        if self.dispatch_failure:
+            raise publisher.PublishError("test notification failed")
+        if self.body != body:
+            raise AssertionError("Notification preceded release metadata publication")
+        self.test_notifications.append(
+            {"release_id": release_id, "pipeline_id": pipeline_id, "body": body}
+        )
 
 
 def make_env(directory: Path, pipeline_id: str = "100") -> dict[str, str]:
@@ -160,6 +171,39 @@ class RollingReleaseTests(unittest.TestCase):
         self.assertIn(publisher.RELEASE_OWNERSHIP_MARKER, github.body)
         self.assertIn("Plugin version: `5.6.0`", github.body)
         self.assertIn("Pipeline: [#100]", github.body)
+        self.assertEqual(github.test_notifications, [
+            {"release_id": 77, "pipeline_id": "100", "body": github.body}
+        ])
+
+    def test_dispatch_failure_is_visible_and_verified_publication_can_be_retried(self) -> None:
+        github = FakeGitHub()
+        github.dispatch_failure = True
+        with patch.object(publisher, "verify_signer"):
+            with self.assertRaisesRegex(publisher.PublishError, "test notification failed"):
+                publisher.publish(self.env, self.gitlab, github)
+            self.assertIn("Pipeline: [#100]", github.body)
+            self.assertEqual(len(github.assets), 1)
+            github.dispatch_failure = False
+            publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(len(github.assets), 1)
+        self.assertEqual(len(github.test_notifications), 1)
+
+    def test_dispatch_api_contract_and_failure(self) -> None:
+        github = publisher.GitHubClient(publisher.EXPECTED_GITHUB_REPOSITORY, "test-token")
+        with patch.object(github, "json_request", return_value=(204, None)) as request:
+            github.dispatch_release_test(77, "100", "verified notes")
+        method, path = request.call_args.args
+        self.assertEqual(method, "POST")
+        self.assertEqual(path, f"/repos/{publisher.EXPECTED_GITHUB_REPOSITORY}/dispatches")
+        payload = request.call_args.kwargs["body"]
+        self.assertEqual(payload["event_type"], "weartak-rolling-release-published")
+        self.assertEqual(payload["client_payload"]["pipeline_id"], "100")
+        self.assertEqual(payload["client_payload"]["release"]["body"], "verified notes")
+        self.assertEqual(payload["client_payload"]["release"]["id"], 77)
+        self.assertFalse(payload["client_payload"]["release"]["draft"])
+        with patch.object(github, "json_request", return_value=(403, None)):
+            with self.assertRaisesRegex(publisher.PublishError, "workflow \\(HTTP 403\\)"):
+                github.dispatch_release_test(77, "100", "verified notes")
 
     def test_missing_precreated_tag_fails_without_creating_release_or_tag(self) -> None:
         github = FakeGitHub()
@@ -176,6 +220,7 @@ class RollingReleaseTests(unittest.TestCase):
             publisher.publish(self.env, self.gitlab, github)
         self.assertIsNone(github.release)
         self.assertEqual(github.uploaded, {})
+        self.assertEqual(github.test_notifications, [])
 
     def test_older_duplicate_pipeline_cannot_replace_newer_published_pipeline(self) -> None:
         github = FakeGitHub()
@@ -211,6 +256,7 @@ class RollingReleaseTests(unittest.TestCase):
                 publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.assets, [old])
         self.assertEqual(github.body, "old release body")
+        self.assertEqual(github.test_notifications, [])
         self.assertEqual(github.deleted, [])
 
     def test_wrong_signer_does_not_create_or_change_release(self) -> None:
@@ -241,6 +287,7 @@ class RollingReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(publisher.PublishError, "contents do not match"):
                 publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.body, "old release body")
+        self.assertEqual(github.test_notifications, [])
         self.assertEqual(github.deleted, [])
         self.assertIn(old, github.assets)
 

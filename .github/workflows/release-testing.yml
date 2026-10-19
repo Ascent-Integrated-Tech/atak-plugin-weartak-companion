@@ -3,18 +3,20 @@ name: Release testing checklist
 on:
   release:
     types: [published]
+  repository_dispatch:
+    types: [weartak-rolling-release-published]
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: release-testing-${{ github.event.release.id }}
+  group: release-testing-${{ github.event.release.id || github.event.client_payload.release.id }}-${{ github.event.client_payload.pipeline_id || 'tagged' }}
   cancel-in-progress: false
 
 jobs:
   notify:
-    if: ${{ !github.event.release.draft }}
+    if: ${{ github.event_name == 'repository_dispatch' || !github.event.release.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

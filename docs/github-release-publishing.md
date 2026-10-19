@@ -51,16 +51,27 @@ to canonical `develop`.
 
 The GitHub Actions workflow `.github/workflows/release-testing.yml` creates an
 issue assigned to the explicitly configured tester when a release is published,
-including a prerelease. It runs only for `release: published`, not release edits
-or asset uploads. Each release ID receives one checklist; rerunning a successful
-workflow does not recreate it, even after the issue is closed.
+including a prerelease. Separately tagged releases receive one checklist per
+release ID.
 
-**Rolling-release limitation:** the existing TAK.gov publisher updates the same
-release. Subsequent pipeline APK replacements do not publish a new release and
-therefore do not trigger this workflow. Its initial publication may also precede
-the first APK upload. This workflow does not provide per-pipeline notification
-for the rolling release; that would require separately authorized update-event
-handling or separately published releases.
+For the fixed rolling release, the TAK.gov publisher sends the
+`weartak-rolling-release-published` repository dispatch after the signed APK is
+uploaded, downloaded for byte verification, and its release metadata is updated.
+The dispatch carries that build's release notes, pipeline ID, download link, and
+SHA-256 so queued runs cannot accidentally report a newer build's details.
+The workflow creates one checklist per release ID and pipeline ID. Retries do
+not recreate existing checklists, including closed ones; an existing open issue
+can have a missing assignment repaired without replacing its results.
+Different pipeline notifications have independent concurrency groups.
+
+Initial rolling-release placeholder publication is ignored. Asset uploads and
+release-note edits alone do not create checklists. Dispatch failures fail the
+publisher visibly after leaving the verified release usable; retry the publisher
+job to resend the notification. The dispatch acknowledges GitHub's acceptance,
+not checklist creation: inspect the **Release testing checklist** Actions run
+for assignment or workflow errors. Rerun that workflow after fixing them.
+Later pipelines still replace old APK assets, so testers should download the
+assigned build promptly and always record its filename/hash.
 
 Issues include a snapshot of the release notes and the checklist in
 [`release-test-checklist.md`](release-test-checklist.md). Edit that file to update
@@ -72,10 +83,14 @@ configured.
 Before enabling:
 
 - Merge these files into GitHub's default branch (`develop`) and enable Actions
-  and Issues for the repository. The published tag must also contain
+  and Issues for the repository. Rolling-release dispatch runs use the workflow
+  on the default branch, so the fixed tag does not need to contain it or move.
+  Deploy the publisher change to canonical TAK.gov `develop` as well; updating
+  GitHub's mirror alone does not change the canonical publisher.
+  For separately tagged releases, the published tag must also contain
   `.github/workflows/release-testing.yml`, because GitHub loads release-triggered
   workflows from the tagged commit. Publishing an older tag, including a fixed
-  rolling-release tag that predates this workflow, will not trigger it; checking
+  release tag that predates this workflow, will not trigger it; checking
   out the default branch only takes effect after a workflow run starts.
 - Have a maintainer explicitly authorize the recipient by setting the repository
   Actions variable `RELEASE_TESTER` to the tester's GitHub username (without `@`).
@@ -85,14 +100,17 @@ Before enabling:
   or eligibility checks fail; it does not silently create an unassigned issue.
 - Allow the workflow's `GITHUB_TOKEN` to read contents and write issues. No new
   secret or additional permission for the TAK.gov publisher token is needed.
-  Release events must come from a user/token or GitHub App, as the existing
-  external TAK.gov publisher does; releases made using another workflow's
-  `GITHUB_TOKEN` do not trigger this workflow.
+  The existing publisher token's **Contents: read and write** permission also
+  permits repository dispatch; no Actions permission is needed for that token.
+  Normal release events must come from a user/token or GitHub App; releases
+  made using another workflow's `GITHUB_TOKEN` do not trigger this workflow.
 
 This source change does not grant access, alter notification preferences, or
 create a live test issue. After merging, authorizing the recipient, and granting
-access, publish a release. Check **Release testing checklist** in Actions and
+access, publish a tagged release or complete a new rolling publisher pipeline.
+Check **Release testing checklist** in Actions and
 the assigned issue. A failed run can be rerun once the access or configuration
 problem is resolved.
 
 Local helper checks: `node --test scripts/tests/test_create_release_test_issue.cjs`.
+Publisher checks: `python -m unittest discover -s scripts/tests -p test_publish_github_release.py`.

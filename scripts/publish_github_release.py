@@ -191,6 +191,27 @@ class GitHubClient(ApiClient):
         if status != 204:
             raise PublishError(f"Could not remove a superseded rolling APK (HTTP {status})")
 
+    def dispatch_release_test(self, release_id: int, pipeline_id: str, body: str) -> None:
+        status, _ = self.json_request(
+            "POST",
+            f"{self.repository_path}/dispatches",
+            body={
+                "event_type": "weartak-rolling-release-published",
+                "client_payload": {
+                    "pipeline_id": pipeline_id,
+                    "release": {
+                        "id": release_id,
+                        "tag_name": RELEASE_TAG,
+                        "draft": False,
+                        "html_url": f"https://github.com/{self.repository}/releases/tag/{RELEASE_TAG}",
+                        "body": body,
+                    },
+                },
+            },
+        )
+        if status != 204:
+            raise PublishError(f"Could not notify the release tester workflow (HTTP {status})")
+
 
 class GitLabClient(ApiClient):
     def __init__(self, api_url: str, project_id: str, job_token: str) -> None:
@@ -430,6 +451,7 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
         checksum,
     )
     github.update_release_body(release_id, description)
+    github.dispatch_release_test(release_id, pipeline_id, description)
 
     managed_asset = re.compile(re.escape(ASSET_PREFIX) + r"[0-9]+\.apk\Z")
     if previous_release_owned:

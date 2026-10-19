@@ -133,3 +133,114 @@ test('drafts perform no API writes', async () => {
   assert.equal(h.created.length, 0);
   assert.equal(h.eligibilityChecks.length, 0);
 });
+
+function rollingHarness(pipelineId = '100', pages) {
+  const h = harness(pages);
+  h.args.context.eventName = 'repository_dispatch';
+  h.args.context.payload = {
+    action: 'weartak-rolling-release-published',
+    client_payload: {
+      pipeline_id: pipelineId,
+      release: {
+        id: 42,
+        tag_name: 'tak-gov-ci-cd-pipeline',
+        draft: false,
+        html_url: 'https://github.com/example/repo/releases/tag/tak-gov-ci-cd-pipeline',
+        body: [
+          '<!-- weartak-companion-rolling-release:managed -->',
+          `- APK: [Download signed CIV plugin](https://github.com/example/repo/releases/download/tak-gov-ci-cd-pipeline/WearTAK-ATAK-Plugin-civ-release-pipeline-${pipelineId}.apk)`,
+          '- Plugin version: `5.6.0`',
+          `- Pipeline: [#${pipelineId}](https://git.tak.gov/pipeline/${pipelineId})`,
+          `- SHA-256: \`${'a'.repeat(64)}\``,
+        ].join('\n'),
+      },
+    },
+  };
+  return h;
+}
+
+test('verified rolling notification creates a pipeline-specific assigned checklist', async () => {
+  const h = rollingHarness();
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created[0].title, 'Release testing: TAK.gov pipeline 100');
+  assert.match(h.created[0].body, /<!-- weartak-release-testing:42-pipeline-100 -->/);
+  assert.match(h.created[0].body, /pipeline-100\.apk/);
+  assert.match(h.created[0].body, /SHA-256/);
+  assert.deepEqual(h.created[0].assignees, ['test-user']);
+});
+
+test('duplicate notification does not recreate a closed pipeline checklist', async () => {
+  const h = rollingHarness('100', [[{
+    state: 'closed',
+    body: '<!-- weartak-release-testing:42-pipeline-100 -->',
+    html_url: 'https://github.com/example/repo/issues/7',
+  }]]);
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 0);
+});
+
+test('new pipeline gets a checklist despite prior pipeline and legacy release issues', async () => {
+  const h = rollingHarness('101', [[
+    { body: '<!-- weartak-release-testing:42-pipeline-100 -->' },
+    { body: '<!-- weartak-release-testing:42 -->' },
+  ]]);
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created[0].title, 'Release testing: TAK.gov pipeline 101');
+});
+
+test('queued notifications retain their own build snapshot, not latest release notes', async () => {
+  const older = rollingHarness('100');
+  const newer = rollingHarness('101');
+  await createReleaseTestIssue(newer.args);
+  await createReleaseTestIssue(older.args);
+  assert.match(older.created[0].body, /pipeline-100\.apk/);
+  assert.doesNotMatch(older.created[0].body, /pipeline-101\.apk/);
+});
+
+test('initial rolling release publication skips assignment until verified dispatch', async () => {
+  const h = harness();
+  h.args.context.payload.release.tag_name = 'tak-gov-ci-cd-pipeline';
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 0);
+  assert.equal(h.listCalls.length, 0);
+});
+
+test('malformed and unverified rolling notifications fail before API calls', async () => {
+  const mutations = [
+    (p) => { p.pipeline_id = '101'; },
+    (p) => { p.pipeline_id = '../100'; },
+    (p) => { p.release.draft = true; },
+    (p) => { p.release.tag_name = 'other'; },
+    (p) => { p.release.id = '42'; },
+    (p) => { p.release.body = p.release.body.replace('managed', 'unowned'); },
+    (p) => { p.release.body = p.release.body.replace('SHA-256', 'missing'); },
+    (p) => { p.release.body = p.release.body.replace('pipeline-100.apk', 'pipeline-99.apk'); },
+  ];
+  for (const mutate of mutations) {
+    const h = rollingHarness();
+    mutate(h.args.context.payload.client_payload);
+    await assert.rejects(createReleaseTestIssue(h.args), /Invalid verified/);
+    assert.equal(h.created.length, 0);
+    assert.equal(h.listCalls.length, 0);
+  }
+});
+
+test('rerun repairs assignment on existing open pipeline issue without replacing results', async () => {
+  const h = rollingHarness('100', [[{
+    number: 7,
+    state: 'open',
+    assignees: [],
+    body: '<!-- weartak-release-testing:42-pipeline-100 -->\n- [x] Tested',
+    html_url: 'https://github.com/example/repo/issues/7',
+  }]]);
+  let assigned;
+  h.args.github.rest.issues.addAssignees = async (params) => {
+    assigned = params;
+    return { data: { html_url: 'https://github.com/example/repo/issues/7',
+      assignees: [{ login: 'test-user' }] } };
+  };
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 0);
+  assert.equal(assigned.issue_number, 7);
+  assert.deepEqual(assigned.assignees, ['test-user']);
+});
