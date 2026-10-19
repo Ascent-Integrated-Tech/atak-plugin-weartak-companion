@@ -72,7 +72,11 @@ configured.
 Before enabling:
 
 - Merge these files into GitHub's default branch (`develop`) and enable Actions
-  and Issues for the repository.
+  and Issues for the repository. The published tag must also contain
+  `.github/workflows/release-testing.yml`, because GitHub loads release-triggered
+  workflows from the tagged commit. Publishing an older tag, including a fixed
+  rolling-release tag that predates this workflow, will not trigger it; checking
+  out the default branch only takes effect after a workflow run starts.
 - Have a maintainer explicitly authorize the recipient by setting the repository
   Actions variable `RELEASE_TESTER` to the tester's GitHub username (without `@`).
   No recipient is configured by this source change.
