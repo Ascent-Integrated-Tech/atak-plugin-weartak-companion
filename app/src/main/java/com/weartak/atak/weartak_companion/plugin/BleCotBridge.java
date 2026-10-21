@@ -6,7 +6,6 @@ import static com.atakmap.android.user.icon.Icon2525cPallet.COT_MAPPING_2525C;
 import android.os.Build;
 import android.util.Log;
 
-import com.atakmap.android.chat.ChatMessageParser;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.MapView;
@@ -236,6 +235,8 @@ public class BleCotBridge {
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
             String title = optString(p, "title", "");
+            String operation = optString(p, "operation", "create");
+            String revision = optString(p, "revision", String.valueOf(System.currentTimeMillis()));
 
             // Point fields (marker payload has these)
             EudFix eudFix = getEudFix();
@@ -307,6 +308,8 @@ public class BleCotBridge {
             String batText = (batteryPct == null ? "null" : String.valueOf(batteryPct));
             String remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
             detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>");
+            appendOriginMetadata(detail, markerUid, operation, revision, watchUid,
+                    optString(p, "cs", ""), myUid);
             if (null == title || title.isEmpty()) {
                 title = escapeXml(buildMarkerCallsign(callsign, time));
             }
@@ -398,11 +401,12 @@ public class BleCotBridge {
 
             String catg     = optString(p, "catg", "Manual SOS Alert");
             String desc     = optString(p, "desc", "SOS Alert");
+            String revision = optString(p, "revision", String.valueOf(System.currentTimeMillis()));
 
             int bat = optInt(p, "bat", -1);
 
             // Self info for link (required by Emergency ingest)
-            String selfUid = optString(p, "uid", "WEAROS-UNKNOWN");
+            String selfUid = myUid;
             String deviceType = mapView.getMapData().getMetaString(
                     "deviceType",
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
@@ -416,6 +420,8 @@ public class BleCotBridge {
             // Emergency payload
             detail.append("<emergency type='").append(escapeXml(desc)).append("'>")
                     .append(escapeXml(callsign)).append("</emergency>");
+            appendOriginMetadata(detail, uid, "alert", revision, watchUid,
+                    optString(p, "cs", ""), myUid);
 
             // Contact (display)
             detail.append("<contact callsign='")
@@ -463,6 +469,7 @@ public class BleCotBridge {
             }
 
             String uid = optString(p, "uid", optString(env, "msg_id", UUID.randomUUID().toString()));
+            String revision = optString(p, "revision", String.valueOf(System.currentTimeMillis()));
 
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
@@ -481,6 +488,8 @@ public class BleCotBridge {
                             + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
                             + "<detail>"
                             + "<emergency cancel='true'>" + escapeXml(callsign) + "</emergency>"
+                            + originMetadata(uid, "cancel", revision, watchUid,
+                            optString(p, "cs", ""), myUid)
                             + "</detail>"
                             + "</event>";
 
@@ -663,12 +672,13 @@ public class BleCotBridge {
 
             CotEvent chatEvent = CotEvent.parse(xml);
 
-            try {
-                ChatMessageParser parser = new ChatMessageParser(mapView);
-                parser.parseCotEvent(chatEvent);
-                Log.d(TAG, "CHAT PATH LOCAL_PARSE completed; eventUid=" + chatEvent.getUID());
-            } catch (Throwable t) {
-                Log.w(TAG, "ChatMessageParser parse failed; chat was not distributed", t);
+            if (internalCotDispatcher != null) {
+                try {
+                    internalCotDispatcher.dispatch(chatEvent);
+                    Log.d(TAG, "CHAT PATH INTERNAL dispatched; eventUid=" + chatEvent.getUID());
+                } catch (Throwable t) {
+                    Log.w(TAG, "CHAT PATH INTERNAL failed", t);
+                }
             }
 
             if (externalCotDispatcher != null) {
@@ -697,8 +707,7 @@ public class BleCotBridge {
 
             switch (msgType) {
                 case "pli":
-                    // Marker payload -> PLI / watch entity update
-                    sendStandardPli(envelopeJson);
+                    Log.d(TAG, "Ignoring watch PLI in companion mode; phone owns the PLI");
                     break;
 
                 case "marker":
@@ -922,6 +931,26 @@ public class BleCotBridge {
     // =========================================================================================
     // HELPER FUNCTIONS
     // =========================================================================================
+    private void appendOriginMetadata(StringBuilder detail, String entityUid,
+                                      String operation, String revision,
+                                      String originDeviceUid, String originCallsign,
+                                      String relayDeviceUid) {
+        detail.append(originMetadata(entityUid, operation, revision, originDeviceUid,
+                originCallsign, relayDeviceUid));
+    }
+
+    private static String originMetadata(String entityUid, String operation, String revision,
+                                         String originDeviceUid, String originCallsign,
+                                         String relayDeviceUid) {
+        if (originDeviceUid == null || originDeviceUid.trim().isEmpty()) return "";
+        return "<weartak originDeviceUid='" + escapeXml(originDeviceUid)
+                + "' entityUid='" + escapeXml(entityUid)
+                + "' operation='" + escapeXml(operation)
+                + "' revision='" + escapeXml(revision)
+                + "' originCallsign='" + escapeXml(originCallsign)
+                + "' relayDeviceUid='" + escapeXml(relayDeviceUid) + "'/>";
+    }
+
     private static String optString(JSONObject o, String k, String def) {
         String v = o.optString(k, null);
         return (v == null || v.isEmpty()) ? def : v;

@@ -1,31 +1,39 @@
 package com.weartak.atak.weartak_companion.plugin;
 
-import java.util.Set;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Tracks watch-originated events so ATAK callbacks are not echoed to the watch. */
 final class WatchOriginRegistry {
 
-    private static final Set<String> MARKERS = ConcurrentHashMap.newKeySet();
+    private static final Map<String, Long> MARKERS = new ConcurrentHashMap<>();
     private static final Map<String, Long> CHATS = new ConcurrentHashMap<>();
     private static final Map<String, String> CHAT_ORIGINS = new ConcurrentHashMap<>();
     private static final long CHAT_TTL_MS = 120_000L;
+    private static final long MARKER_TTL_MS = 5_000L;
     private static final Set<String> EMERGENCIES = ConcurrentHashMap.newKeySet();
 
     private WatchOriginRegistry() {
     }
 
     static void markMarker(String uid) {
-        addIfPresent(MARKERS, uid);
+        if (uid != null && !uid.isEmpty()) MARKERS.put(uid, System.currentTimeMillis());
     }
 
     static boolean consumeMarker(String uid) {
-        return removeIfPresent(MARKERS, uid);
+        return isMarker(uid) && MARKERS.remove(uid) != null;
     }
 
     static boolean isMarker(String uid) {
-        return containsIfPresent(MARKERS, uid);
+        if (uid == null || uid.isEmpty()) return false;
+        Long markedAt = MARKERS.get(uid);
+        if (markedAt == null) return false;
+        if (System.currentTimeMillis() - markedAt > MARKER_TTL_MS) {
+            MARKERS.remove(uid, markedAt);
+            return false;
+        }
+        return true;
     }
 
     static void markChat(String uid) {

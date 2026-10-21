@@ -140,6 +140,10 @@ final class WearTakDownstreamBridge implements
         if (message == null) return;
         String messageUid = firstNonBlank(message.getString("uid"), message.getString("messageId"));
         String messageId = message.getString("messageId", "");
+        String originDeviceUid = WatchOriginRegistry.chatOrigin(messageUid);
+        if (originDeviceUid.isEmpty()) {
+            originDeviceUid = WatchOriginRegistry.chatOrigin(messageId);
+        }
         if (WatchOriginRegistry.isChat(messageUid) || WatchOriginRegistry.isChat(messageId)) {
             Log.d(TAG, "Suppressing watch-originated chat callback uid=" + messageUid
                     + " messageId=" + messageId);
@@ -148,12 +152,12 @@ final class WearTakDownstreamBridge implements
         JSONObject payload = new JSONObject();
         put(payload, "uid", messageUid);
         put(payload, "senderUid", message.getString("senderUid", ""));
-        String originDeviceUid = WatchOriginRegistry.chatOrigin(messageUid);
-        if (originDeviceUid.isEmpty()) originDeviceUid = WatchOriginRegistry.chatOrigin(messageId);
-        if (originDeviceUid.isEmpty()) {
-            originDeviceUid = firstNonBlank(message.getString("senderUid"), messageUid);
+        if (!originDeviceUid.isEmpty()) {
+            put(payload, "originDeviceUid", originDeviceUid);
+        } else {
+            Log.d(TAG, "Forwarding chat with unknown origin uid=" + messageUid
+                    + " senderUid=" + message.getString("senderUid", ""));
         }
-        put(payload, "originDeviceUid", originDeviceUid);
         put(payload, "relayDeviceUid", phoneUid());
         put(payload, "senderCallsign", message.getString("senderCallsign", ""));
         put(payload, "roomUid", message.getString("conversationId", "All Chat Rooms"));
@@ -193,6 +197,8 @@ final class WearTakDownstreamBridge implements
 
         JSONObject payload = new JSONObject();
         put(payload, "operation", operation);
+        put(payload, "entityUid", item.getUID());
+        put(payload, "revision", System.currentTimeMillis());
         put(payload, "uid", item.getUID());
         put(payload, "type", item.getType());
         put(payload, "title", item.getTitle());
@@ -247,6 +253,9 @@ final class WearTakDownstreamBridge implements
         GeoPoint point = alert.getPoint();
         JSONObject payload = new JSONObject();
         put(payload, "state", state);
+        put(payload, "entityUid", item == null ? "" : item.getUID());
+        put(payload, "operation", "CANCEL".equalsIgnoreCase(state) ? "cancel" : "alert");
+        put(payload, "revision", System.currentTimeMillis());
         put(payload, "uid", item == null ? "" : item.getUID());
         put(payload, "message", alert.getMessage());
         put(payload, "category", alertCategory(alert));
@@ -293,7 +302,13 @@ final class WearTakDownstreamBridge implements
         put(envelope, "msgUid", safeIdentity.isEmpty() ? type + ":" + System.nanoTime() : safeIdentity);
         put(envelope, "t", System.currentTimeMillis());
         put(envelope, "src", "atak");
-        put(envelope, "originDeviceUid", payload.optString("originDeviceUid", phoneUid()));
+        String originDeviceUid = payload.optString("originDeviceUid", "");
+        if (!originDeviceUid.isEmpty()) {
+            put(envelope, "originDeviceUid", originDeviceUid);
+        } else {
+            Log.d(TAG, "Downstream message has unknown origin type=" + type
+                    + " identity=" + safeIdentity);
+        }
         put(envelope, "relayDeviceUid", phoneUid());
         put(envelope, "payload", payload);
         if (sender.send(envelope.toString())) {
