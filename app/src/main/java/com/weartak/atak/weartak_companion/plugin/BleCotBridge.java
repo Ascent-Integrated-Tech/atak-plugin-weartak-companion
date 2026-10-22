@@ -197,63 +197,10 @@ public class BleCotBridge {
                 return;
             }
 
-            // ----- Identity (Of phone / companion plugin EUD) -----
-            String uid = myUid;
-
-            // time/start/stale: prefer payload.time_start/time_stale else now/+2min
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120000));
-
-            // callsign + optional extras
-            String callsign   = pluginCallsign;
-            String remarks    = optString(p, "remarks", "WearTAK PLI");
-            String role       = optString(p, "role", "member");
-            String teamValue  = optString(p, "team", "Blue");
-
-            double courseDeg = optDouble(p, "course", 0.0);
-            double speedMps  = optDouble(p, "speed", 0.0);
-
-            // battery and hr in details
-            Integer batteryPct = optIntNullable(p, "battery_percent");
-            if (batteryPct == null) batteryPct = optIntNullable(p, "bat");
-
-            Integer hrBpm = optIntNullable(p, "hr");
-            if (hrBpm == null) hrBpm = optIntNullable(p, "heart_rate");
-            if (hrBpm == null) hrBpm = optIntNullable(p, "heartRateBpm");
-
-            // Point: force ATAK EUD location
             EudFix fix = getEudFix();
-            double lat = fix.lat, lon = fix.lon, hae = fix.hae, ce = fix.ce, le = fix.le;
-
-            StringBuilder detail = new StringBuilder();
-            detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>")
-                    .append("<contact endpoint='*:-1:stcp' callsign='").append(escapeXml(callsign)).append("'/>")
-                    .append("<__group role='").append(escapeXml(role)).append("' name='").append(escapeXml(teamValue)).append("'/>")
-                    .append("<track course='").append(trimDouble(courseDeg)).append("' speed='").append(trimDouble(speedMps)).append("'/>");
-
-            // Battery in <status battery=".."/>
-            if (batteryPct != null) {
-                int b = Math.max(0, Math.min(100, batteryPct));
-                detail.append("<status battery='").append(b).append("'/>");
-            }
-
-            // HR as custom physio tag (ATAK will preserve unknown tags)
-            if (hrBpm != null && hrBpm > 0) {
-                detail.append("<physio hr='").append(hrBpm).append("'/>");
-            }
-
-            String xml =
-                    "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
-                            + "<event version='2.0' uid='" + escapeXml(uid) + "' type='a-f-G-U-C' "
-                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale) + "' how='h-g-i-g-o'>"
-                            + "<point lat='" + String.format("%.6f", lat)
-                            + "' lon='" + String.format("%.6f", lon)
-                            + "' hae='" + String.format("%.1f", hae)
-                            + "' ce='" + trimDouble(ce) + "' le='" + trimDouble(le) + "'/>"
-                            + "<detail>"
-                            + detail
-                            + "</detail>"
-                            + "</event>";
+            String xml = LegacyPliCot.build(p, myUid, pluginCallsign,
+                    fix.lat, fix.lon, fix.hae, fix.ce, fix.le,
+                    PhoneIdentity.metadata(mapView), System.currentTimeMillis());
 
             Log.d(TAG, "Standard PLI XML:\n" + xml);
 
@@ -979,23 +926,12 @@ public class BleCotBridge {
         return o.optInt(k, def);
     }
 
-    private static double optDouble(JSONObject o, String k, double def) {
-        if (!o.has(k)) return def;
-        return o.optDouble(k, def);
-    }
-
     private static String trimDouble(double d) {
         return ((int) d) == d ? Integer.toString((int) d) : Double.toString(d);
     }
 
     private static String escapeXml(String s) {
-        if (s == null) return "";
-        return s
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&apos;");
+        return LegacyPliCot.xml(s);
     }
 
     private static String iso8601(long timeMs) {
