@@ -30,7 +30,6 @@ final class PhoneGnssDiagnostics {
     private static final String TAG = "WTK/LocationDiagnostics";
     private static final long REPORT_INTERVAL_MS = 30_000L;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private Context context;
     private LocationManager locationManager;
     private LocationListener passiveFixListener;
     private GnssStatus.Callback statusCallback;
@@ -58,14 +57,13 @@ final class PhoneGnssDiagnostics {
     };
 
     @SuppressLint("MissingPermission")
-    synchronized void start(Context pluginContext, String diagnosticSession, long bleSession,
+    synchronized void start(Context hostContext, String diagnosticSession, long bleSession,
                             Listener snapshotListener) {
         if (!LocationDiagnosticsProtocol.isValidSession(diagnosticSession) || bleSession < 0) {
             throw new IllegalArgumentException("Invalid bonded diagnostics session");
         }
         stop();
-        context = pluginContext.getApplicationContext();
-        locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        locationManager = (LocationManager) hostContext.getSystemService(Context.LOCATION_SERVICE);
         session = diagnosticSession;
         readySession = bleSession;
         listener = snapshotListener;
@@ -77,9 +75,9 @@ final class PhoneGnssDiagnostics {
             publish(true);
             return;
         }
-        boolean hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        boolean hasFine = ContextCompat.checkSelfPermission(hostContext, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
-        boolean hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
+        boolean hasCoarse = ContextCompat.checkSelfPermission(hostContext, Manifest.permission.ACCESS_COARSE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
         if (!hasFine && !hasCoarse) {
             setUnavailable("Location permission not granted");
