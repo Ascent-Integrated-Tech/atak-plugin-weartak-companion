@@ -937,11 +937,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private SharedPreferences systemBondedPreferences() {
-        MapView mapView = MapView.getMapView();
-        Context context = mapView != null ? mapView.getContext() : pluginContext;
-        Context application = context.getApplicationContext();
-        return (application != null ? application : context)
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return PluginPrefs.get(pluginContext, PREFS_NAME);
     }
 
     private void persistConnectionMode(ConnectionModeController.Mode mode) {
@@ -3072,7 +3068,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (pluginContext == null) return;
         if (address == null || address.trim().isEmpty()) return;
 
-        pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        systemBondedPreferences()
                 .edit()
                 .putString(KEY_PREF_ADDR, address.trim())
                 .putString(KEY_PREF_NAME, nameOrNull == null ? "" : nameOrNull)
@@ -3083,7 +3079,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void clearPreferredDevice(String address) {
         if (pluginContext == null) return;
 
-        SharedPreferences prefs = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = systemBondedPreferences();
         String current = prefs.getString(KEY_PREF_ADDR, null);
         if (address != null) {
             if (current == null) return;
@@ -3100,7 +3096,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredAddress() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = systemBondedPreferences()
                 .getString(KEY_PREF_ADDR, null);
         if (v == null) return null;
         v = v.trim();
@@ -3109,7 +3105,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private String loadPreferredName() {
         if (pluginContext == null) return null;
-        String v = pluginContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        String v = systemBondedPreferences()
                 .getString(KEY_PREF_NAME, null);
         if (v == null) return null;
         v = v.trim();
