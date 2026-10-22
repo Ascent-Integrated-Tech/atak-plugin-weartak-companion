@@ -324,6 +324,7 @@ dependencies {
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20231013'
+    testImplementation 'org.mockito:mockito-core:4.11.0'
 
     // This is likely pulling in appcompat transitively depending on your environment.
     implementation("com.google.android.gms:play-services-wearable:18.1.0") {

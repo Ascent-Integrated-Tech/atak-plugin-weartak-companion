@@ -617,14 +617,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (bleClient == null) {
             bleClient = new WearTakBleClient(pluginContext, null);
         }
-        bleClient.setStatusListener(connected -> {
+        bleClient.setStatusListener((WearTakBleClient.RefreshAwareStatusListener) (connected, refreshing) -> {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!connected) failManagementRelease("Watch disconnected before acknowledgement.");
                     if (!connected) stopLocationDiagnostics("watch disconnected");
                     if (!connected && bleCotBridge != null) bleCotBridge.discardPendingCot();
                     if (!connected && phoneUserRelay != null) phoneUserRelay.disconnected();
-                    if (systemBondedConnection != null) systemBondedConnection.onConnectionChanged(connected);
+                    if (systemBondedConnection != null)
+                        systemBondedConnection.onConnectionChanged(connected, refreshing);
                     BloodhoundBridge bridge = bloodhoundBridge;
                     if (!connected && bridge != null) bridge.disconnected();
                     if (connectionStatusTV != null) {

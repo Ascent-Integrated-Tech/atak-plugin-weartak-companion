@@ -35,6 +35,25 @@ Failure or another service change before readiness ends that one-shot recovery;
 Connect can be retried manually. Scan, Disconnect, trust loss, and mode teardown
 cancel it. Samsung retains its own retry owner.
 
+Services Changed on a still-connected, still-bonded GATT (Traditional or Samsung,
+during setup or after readiness) first rediscovers services on that same connection
+and promptly re-enables A11B notifications, without changing the watch's four-second
+CCCD watchdog. The refresh starts a new session generation, tears down the settings
+session (`connected=false`), clears the RX/TX queues and characteristics, re-arms the
+25-second setup timeout, and drains any outstanding MTU, discovery, CCCD or TX
+completion before issuing fresh discovery. A pending pre-change discovery result
+is discarded, not reused. This serial handoff prevents its completion from answering
+a new request even if Android reuses characteristic objects or handles. Android has
+no request token; this relies on one completion per issued operation, not protection
+against arbitrary duplicate platform callbacks. A missing completion fails closed at
+the setup timeout; waiting for it may still exceed the watch's unchanged watchdog. The
+Samsung owner is not reset by that transient disconnect, but any refresh failure or
+timeout still reaches it. Each GATT connection gets one in-place refresh; readiness on
+the same GATT does not restore it, so a second Services Changed falls back to the
+bounded close/retry behaviour above. An unbonded peer still fails closed.
+This recovery does not address the separate, unproven service-disable case ("Case A");
+watch enablement, managed-configuration policy and service lifecycle are unchanged.
+
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no
 different watch is selected by name. Scan results still require a live A11A

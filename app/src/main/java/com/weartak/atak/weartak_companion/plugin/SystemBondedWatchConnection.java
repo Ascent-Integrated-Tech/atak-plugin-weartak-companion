@@ -110,8 +110,17 @@ public final class SystemBondedWatchConnection {
     }
 
     public void onConnectionChanged(boolean connected) {
+        onConnectionChanged(connected, false);
+    }
+
+    /**
+     * A disconnect reported while the transport rediscovers services on the same bonded GATT is
+     * not a lost connection; refresh failures still arrive once through {@link #onError(String)}.
+     */
+    public void onConnectionChanged(boolean connected, boolean transportRefreshing) {
         scheduler.execute(() -> {
             if (!active) return;
+            if (!connected && transportRefreshing) return;
             if (connected) {
                 if (!attempting || !connecting) return;
                 cancelTimers();
