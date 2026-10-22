@@ -90,6 +90,24 @@ stopping the transport; stopped/generation-fenced probe and retry callbacks cann
 reconnect after switching to Samsung or Garmin. The three-choice connection-mode
 dialog uses ATAK's activity context so it has a valid host window token.
 
+LEGACY BLE IDENTITY METADATA
+
+Legacy JSON PLI intentionally continues to represent the phone/EUD: its UID,
+plugin callsign and ATAK location are unchanged. Its group comes from ATAK's
+current `deviceTeam` map data and host `atakRoleType` preference (existing
+Blue / Team Member defaults), never from watch JSON. Runtime `takv` uses ATAK's
+brand, version, device description and OS helpers, respecting the host's
+`dispatchTAKVersionNumber` preference; unavailable attributes are omitted.
+Raw Gateway watch CoT is not rewritten.
+
+Optional watch `team` / `role` strings in settings snapshots and identity-only
+`settings_changed` deltas are retained in the existing observed settings snapshot.
+Missing, blank, null or non-string fields do not invent values or erase a known
+current-session value. Disconnect, peer switch and mode teardown discard the
+observations; old peers start without them. Partial deltas do not unlock settings
+sends. These observations neither write phone identity nor trigger settings
+feedback to the watch. Phone-managed settings use only the phone's ATAK profile.
+
 PAIRING PREFERENCE STORAGE
 
 Pairing addresses, watch UID/callsign, and preferred-device display metadata use

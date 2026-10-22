@@ -2720,23 +2720,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         return callsign == null ? "" : callsign.trim();
     }
 
-    private String getPhoneProfileValue(String key, String fallback) {
-        MapView mapView = MapView.getMapView();
-        Marker self = mapView == null ? null : mapView.getSelfMarker();
-        String value = self == null ? "" : self.getMetaString(key, "");
-        if ((value == null || value.trim().isEmpty()) && lastSettingsPayload != null) {
-            value = lastSettingsPayload.optString(key, "");
-        }
-        return value == null || value.trim().isEmpty() ? fallback : value.trim();
-    }
-
     private String getPhoneTeam() {
-        return getPhoneProfileValue("team", "Blue");
+        return PhoneIdentity.team(MapView.getMapView());
     }
 
     private String getPhoneRole() {
-        String role = getPhoneProfileValue("atakRoleType", "");
-        return role.isEmpty() ? getPhoneProfileValue("role", "Team Member") : role;
+        return PhoneIdentity.role(MapView.getMapView());
     }
 
     private void updatePhoneIdentityViews() {
@@ -3008,12 +2997,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
     }
 
-    private void applySettingsPayloadDiscretely(JSONObject payload, String reason, long settingsToken) {
+    private void applySettingsPayloadDiscretely(JSONObject payload, String reason, long settingsToken)
+            throws org.json.JSONException {
         if (payload == null) return;
         boolean complete = payload.optJSONArray("takServerList") != null
                 && optInt(payload, "reportIntSecs") != null;
         if (!settingsSession.acceptSnapshot(settingsToken, complete)) return;
-        if (complete) lastSettingsPayload = payload;
+        lastSettingsPayload = WatchSettingsSnapshot.observe(lastSettingsPayload, payload, complete);
         JSONArray servers = payload.optJSONArray("takServerList");
         Log.i(TAG, "applySettingsPayloadDiscretely reason=" + reason
                 + " serverCount=" + (servers == null ? 0 : servers.length()));
