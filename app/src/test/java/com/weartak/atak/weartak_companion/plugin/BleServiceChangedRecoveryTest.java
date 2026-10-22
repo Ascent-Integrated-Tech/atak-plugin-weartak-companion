@@ -145,7 +145,7 @@ public class BleServiceChangedRecoveryTest {
 
         serviceChanged(peer);
         assertFalse(peer.closed);
-        assertEquals(1, peer.discoveries);
+        assertEquals(0, peer.discoveries); // serialized behind the outstanding MTU request
         callback.onMtuChanged(peer.gatt, 247, BluetoothGatt.GATT_SUCCESS);
         drain();
         assertEquals(1, peer.discoveries);
@@ -154,6 +154,255 @@ public class BleServiceChangedRecoveryTest {
         assertTrue(client.getReadySession() >= 0);
         assertEquals(1, readies);
         assertTrue(errors.isEmpty());
+    }
+
+    @Test public void pendingPreChangeDiscoveryResultIsConsumedThenRediscovered() throws Exception {
+        Peer peer = attach("AA:BB:CC:DD:EE:01");
+        callback.onConnectionStateChange(peer.gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_CONNECTED);
+        drain();
+        callback.onMtuChanged(peer.gatt, 247, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(1, peer.discoveries);
+
+        serviceChanged(peer);
+        assertEquals(1, peer.discoveries);
+        callback.onServicesDiscovered(peer.gatt, BluetoothGatt.GATT_SUCCESS); // old-database result
+        drain();
+
+        assertEquals(0, peer.cccdWrites); // nothing from the stale result was trusted
+        assertEquals(2, peer.discoveries);
+        assertEquals(-1, client.getReadySession());
+        callback.onServicesDiscovered(peer.gatt, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(1, peer.cccdWrites);
+        callback.onDescriptorWrite(peer.gatt, peer.lastCccd, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertTrue(client.getReadySession() >= 0);
+        assertEquals(1, readies);
+        assertFalse(peer.closed);
+        assertTrue(errors.isEmpty());
+        assertTrue(delayed.isEmpty());
+    }
+
+    @Test public void staleCccdAckCannotMarkPostChangeSessionReady() throws Exception {
+        Peer peer = attach("AA:BB:CC:DD:EE:01");
+        callback.onConnectionStateChange(peer.gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_CONNECTED);
+        drain();
+        callback.onMtuChanged(peer.gatt, 247, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        callback.onServicesDiscovered(peer.gatt, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        BluetoothGattDescriptor oldCccd = peer.lastCccd;
+        peer.reuseServices = true;
+
+        serviceChanged(peer);
+        assertEquals(1, peer.discoveries); // old database stays intact until its CCCD ack arrives
+        callback.onDescriptorWrite(peer.gatt, oldCccd, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(2, peer.discoveries);
+        assertEquals(0, readies);
+
+        // Android maps late acks by handle onto the rebuilt database; no CCCD request is outstanding.
+        BluetoothGattDescriptor newCccd = peer.service
+                .getCharacteristic(WearTakBleClient.TX_TO_COMPANION_UUID).getDescriptor(CCCD);
+        assertSame(oldCccd, newCccd);
+        callback.onDescriptorWrite(peer.gatt, newCccd, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(-1, client.getReadySession());
+        assertEquals(0, readies);
+
+        completeDiscovery(peer);
+        assertSame(newCccd, peer.lastCccd);
+        assertTrue(client.getReadySession() >= 0);
+        assertEquals(1, readies);
+        assertEquals(2, peer.cccdWrites);
+        assertTrue(errors.isEmpty());
+    }
+
+    @Test public void staleTxAckIsConsumedAndCannotAdvanceNewSessionQueue() throws Exception {
+        Peer peer = connectReady("AA:BB:CC:DD:EE:01");
+        peer.reuseServices = true;
+        String message = json(400); // three 180-byte chunks at MTU 247
+        assertTrue(client.writeJsonLineToWatch(message, client.getReadySession()));
+        drain();
+        assertEquals(1, peer.txWrites);
+        BluetoothGattCharacteristic oldRx = peer.service.getCharacteristic(WearTakBleClient.RX_FROM_COMPANION_UUID);
+
+        serviceChanged(peer);
+        assertEquals(1, peer.discoveries); // waits for the in-flight chunk's ack
+        callback.onCharacteristicWrite(peer.gatt, oldRx, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(2, peer.discoveries);
+        assertEquals(1, peer.txWrites); // the cleared old queue did not resume
+
+        BluetoothGattCharacteristic newRx = peer.service.getCharacteristic(WearTakBleClient.RX_FROM_COMPANION_UUID);
+        assertSame(oldRx, newRx);
+        callback.onCharacteristicWrite(peer.gatt, newRx, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        completeDiscovery(peer);
+        assertEquals(1, peer.txWrites);
+        assertTrue(client.gatewayTxIdle());
+
+        assertTrue(client.writeJsonLineToWatch(message, client.getReadySession()));
+        drain();
+        assertEquals(2, peer.txWrites);
+        callback.onCharacteristicWrite(peer.gatt, newRx, BluetoothGatt.GATT_SUCCESS);
+        callback.onCharacteristicWrite(peer.gatt, newRx, BluetoothGatt.GATT_SUCCESS); // duplicate/stale
+        drain();
+        assertEquals(3, peer.txWrites); // one ack advanced exactly one chunk
+        callback.onCharacteristicWrite(peer.gatt, newRx, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertEquals(4, peer.txWrites);
+        callback.onCharacteristicWrite(peer.gatt, newRx, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertTrue(client.gatewayTxIdle());
+        assertEquals(4, peer.txWrites);
+        assertFalse(peer.closed);
+        assertTrue(errors.isEmpty());
+    }
+
+    @Test public void missingPreChangeCompletionTimesOutWithoutOverlappingDiscovery() throws Exception {
+        Peer peer = connectReady("AA:BB:CC:DD:EE:01");
+        assertTrue(client.writeJsonLineToWatch(json(400), client.getReadySession()));
+        drain();
+        BluetoothGattCharacteristic oldRx = peer.service.getCharacteristic(WearTakBleClient.RX_FROM_COMPANION_UUID);
+        serviceChanged(peer);
+        assertEquals(1, peer.discoveries);
+        delayed.remove(0).run();
+        drain();
+        assertTrue(peer.closed);
+        assertEquals(1, peer.discoveries);
+        assertEquals("BLE setup timed out before transport ready", lastError());
+
+        Peer next = connectReady("AA:BB:CC:DD:EE:01");
+        int readyCount = readies;
+        callback.onServicesDiscovered(peer.gatt, BluetoothGatt.GATT_SUCCESS);
+        callback.onDescriptorWrite(peer.gatt, peer.lastCccd, BluetoothGatt.GATT_SUCCESS);
+        callback.onCharacteristicWrite(peer.gatt, oldRx, BluetoothGatt.GATT_SUCCESS);
+        drain();
+        assertSame(next.gatt, get("bluetoothGatt"));
+        assertEquals(readyCount, readies);
+        assertTrue(client.getReadySession() >= 0);
+        assertEquals(1, next.discoveries);
+        assertEquals(0, next.txWrites);
+    }
+
+    @Test public void repeatedChangeWhileDrainingCannotRestartRecoveryBudget() throws Exception {
+        Peer peer = connectReady("AA:BB:CC:DD:EE:01");
+        assertTrue(client.writeJsonLineToWatch(json(400), client.getReadySession()));
+        drain();
+        serviceChanged(peer);
+        serviceChanged(peer);
+        assertTrue(peer.closed);
+        assertEquals(1, peer.discoveries);
+        assertFalse(refreshing());
+        assertTrue(delayed.isEmpty());
+        assertEquals(1, errors.size());
+    }
+
+    @Test public void samsungOwnerStaysReadyThroughRefreshIncludingFastReadyRace() throws Exception {
+        Owner owner = connectOwner();
+        Peer peer = owner.peer;
+
+        serviceChanged(peer);
+        completeDiscovery(peer); // ready again before the plugin main thread runs
+        assertEquals(2, owner.pluginMain.size()); // false(refreshing) then true
+        owner.runPluginMain();
+
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+        assertEquals(0, owner.resets);
+        assertTrue(client.getReadySession() >= 0);
+
+        // An actual link loss after the refresh still reaches the owner as a disconnect.
+        callback.onConnectionStateChange(peer.gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_DISCONNECTED);
+        drain();
+        owner.runPluginMain();
+        assertNotEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+        assertEquals(1, owner.resets);
+    }
+
+    @Test public void samsungOwnerSeesRefreshTimeoutExactlyOnce() throws Exception {
+        Owner owner = connectOwner();
+        serviceChanged(owner.peer);
+        owner.runPluginMain();
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+
+        delayed.remove(0).run();
+        drain();
+        owner.runPluginMain();
+
+        assertTrue(owner.peer.closed);
+        assertEquals(Arrays.asList("BLE setup timed out before transport ready"), errors);
+        assertNotEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+        assertEquals(1, owner.resets);
+    }
+
+    @Test public void samsungOwnerSeesRefreshDiscoveryErrorExactlyOnce() throws Exception {
+        Owner owner = connectOwner();
+        serviceChanged(owner.peer);
+        callback.onServicesDiscovered(owner.peer.gatt, 133);
+        drain();
+        owner.runPluginMain();
+
+        assertTrue(owner.peer.closed);
+        assertEquals(1, errors.size());
+        assertNotEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+        assertEquals(1, owner.resets);
+    }
+
+    /** Real client and real Samsung owner joined like WearTakPlugin: status/error hop to plugin main. */
+    private Owner connectOwner() throws Exception {
+        Owner owner = new Owner();
+        owner.connection = new SystemBondedWatchConnection(new SystemBondedWatchConnection.Scheduler() {
+            @Override public void execute(Runnable action) { action.run(); }
+            @Override public void later(Runnable action, long delayMs) { }
+            @Override public void cancel(Runnable action) { }
+        }, new SystemBondedWatchConnection.Transport() {
+            final WearTakBleClient.DiscoveredDevice device =
+                    new WearTakBleClient.DiscoveredDevice("WearTAK", "AA:BB:CC:DD:EE:01", 0);
+            @Override public WearTakBleClient.DiscoveredDevice knownBondedCandidate() { return device; }
+            @Override public void find(WearTakBleClient.BondedCompanionListener listener) { listener.onFound(device); }
+            @Override public void connect(WearTakBleClient.DiscoveredDevice device) { }
+            @Override public void reset() { owner.resets++; }
+        }, new SystemBondedWatchConnection.Listener() {
+            @Override public void onStatus(String message) { }
+            @Override public void onConnecting(WearTakBleClient.DiscoveredDevice device) { }
+            @Override public void onCandidate(WearTakBleClient.DiscoveredDevice device) { }
+        });
+        client.setStatusListener((WearTakBleClient.RefreshAwareStatusListener) (connected, refreshing) ->
+                owner.pluginMain.add(() -> owner.connection.onConnectionChanged(connected, refreshing)));
+        client.setJsonListener(new WearTakBleClient.JsonListener() {
+            @Override public void onReady() { readies++; }
+            @Override public void onJson(String jsonLine) { }
+            @Override public void onPaired(String deviceId, String callsign) { }
+            @Override public void onError(String msg) {
+                errors.add(msg);
+                owner.pluginMain.add(() -> owner.connection.onError(msg));
+            }
+            @Override public void onTrustLost(String deviceAddress, String reason) { }
+        });
+        owner.connection.start();
+        assertEquals(SystemBondedWatchConnection.State.CONNECTING, owner.connection.getState());
+        owner.peer = connectReady("AA:BB:CC:DD:EE:01");
+        owner.runPluginMain();
+        assertEquals(SystemBondedWatchConnection.State.CONNECTED, owner.connection.getState());
+        return owner;
+    }
+
+    private static final class Owner {
+        final ArrayDeque<Runnable> pluginMain = new ArrayDeque<>();
+        SystemBondedWatchConnection connection;
+        Peer peer;
+        int resets;
+        void runPluginMain() {
+            while (!pluginMain.isEmpty()) pluginMain.poll().run();
+        }
+    }
+
+    private static String json(int size) {
+        StringBuilder value = new StringBuilder();
+        while (value.length() < size) value.append('x');
+        return "{\"v\":\"" + value + "\"}";
     }
 
     @Test public void unbondedServiceChangeStillFailsClosed() throws Exception {
@@ -264,7 +513,7 @@ public class BleServiceChangedRecoveryTest {
         when(gatt.requestMtu(anyInt())).thenAnswer(i -> ++peer.mtuRequests > 0);
         when(gatt.discoverServices()).thenAnswer(i -> {
             peer.discoveries++;
-            peer.service = service();
+            if (!peer.reuseServices || peer.service == null) peer.service = service();
             return true;
         });
         when(gatt.getService(any(UUID.class))).thenAnswer(i ->
@@ -273,8 +522,10 @@ public class BleServiceChangedRecoveryTest {
                 .thenReturn(true);
         when(gatt.writeDescriptor(any(BluetoothGattDescriptor.class))).thenAnswer(i -> {
             peer.lastCccd = i.getArgument(0);
+            peer.cccdWrites++;
             return true;
         });
+        when(gatt.writeCharacteristic(any(BluetoothGattCharacteristic.class))).thenAnswer(i -> ++peer.txWrites > 0);
         doAnswer(i -> peer.closed = true).when(gatt).close();
         peer.gatt = gatt;
         return peer;
@@ -300,8 +551,8 @@ public class BleServiceChangedRecoveryTest {
         BluetoothGattService service;
         BluetoothGattDescriptor lastCccd;
         int bond = BluetoothDevice.BOND_BONDED;
-        int mtuRequests, discoveries;
-        boolean closed;
+        int mtuRequests, discoveries, cccdWrites, txWrites;
+        boolean closed, reuseServices;
     }
 
     private static final class HostContext extends ContextWrapper {

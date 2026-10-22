@@ -74,7 +74,12 @@ public class WearTakBleClient {
     private Runnable setupTimeout;
     // One in-place Service Changed refresh per GATT connection; onReady never restores the budget.
     private BluetoothGatt serviceRefreshGatt;
-    private boolean refreshingServices, discoveryPending;
+    private boolean refreshingServices;
+    // Android resolves write callbacks by handle, without an operation token. Drain the single
+    // outstanding request before rediscovery so its completion cannot answer a new request.
+    private static final int OP_NONE = 0, OP_MTU = 1, OP_DISCOVERY = 2, OP_CCCD = 3, OP_TX = 4;
+    private int gattOp = OP_NONE;
+    private boolean refreshAfterOp;
     private volatile BluetoothGattCharacteristic txNotifyChar; // A11B
     private volatile BluetoothGattCharacteristic rxWriteChar;  // A11C
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
@@ -186,6 +191,19 @@ public class WearTakBleClient {
 
     public interface StatusListener {
         void onConnectionStatusChanged(boolean connected);
+
+        /** {@code refreshingServices} is captured with the transition (same-connection Service Changed refresh). */
+        default void onConnectionStatusChanged(boolean connected, boolean refreshingServices) {
+            onConnectionStatusChanged(connected);
+        }
+    }
+
+    public interface RefreshAwareStatusListener extends StatusListener {
+        @Override void onConnectionStatusChanged(boolean connected, boolean refreshingServices);
+
+        @Override default void onConnectionStatusChanged(boolean connected) {
+            onConnectionStatusChanged(connected, false);
+        }
     }
 
     private volatile StatusListener statusListener;
@@ -792,8 +810,17 @@ public class WearTakBleClient {
         synchronized (rxLock) { rxBuffer.clear(); }
         synchronized (txLock) { txQueue.clear(); txInFlight = false; }
         armSetupTimeout();
-        logW("Watch services changed; rediscovering on the same bonded connection");
         setConnected(false);
+        if (gattOp != OP_NONE) {
+            refreshAfterOp = true;
+            logW("Watch services changed; rediscovering after the outstanding GATT request");
+            return;
+        }
+        logW("Watch services changed; rediscovering on the same bonded connection");
+        rediscover(gatt);
+    }
+
+    private void rediscover(BluetoothGatt gatt) {
         try {
             if (!startServiceDiscovery(gatt)) {
                 failSecureSession("Service discovery could not start", "discovery_start_failed");
@@ -803,11 +830,20 @@ public class WearTakBleClient {
         }
     }
 
-    /** Android allows one discovery per GATT; a pending one is reused instead of duplicated. */
     private synchronized boolean startServiceDiscovery(BluetoothGatt gatt) {
-        if (discoveryPending) return true;
-        discoveryPending = gatt.discoverServices();
-        return discoveryPending;
+        if (!gatt.discoverServices()) return false;
+        gattOp = OP_DISCOVERY;
+        return true;
+    }
+
+    /** A pre-change completion starts fresh discovery instead of advancing setup/TX. */
+    private synchronized boolean completeGattOp(BluetoothGatt gatt, int kind) {
+        if (gattOp != kind) return false;
+        gattOp = OP_NONE;
+        if (!refreshAfterOp) return true;
+        refreshAfterOp = false;
+        rediscover(gatt);
+        return false;
     }
 
     private boolean matchesNormalizedName(String expectedName, DiscoveredDevice device) {
@@ -1107,6 +1143,8 @@ public class WearTakBleClient {
                 txInFlight = false;
             }
             failSecureSession("TX writeCharacteristic returned false", "tx_write_start_failed");
+        } else {
+            gattOp = OP_TX;
         }
     }
 
@@ -1228,7 +1266,9 @@ public class WearTakBleClient {
                 }
 
                 try {
-                    if (!gatt.requestMtu(DESIRED_MTU) && !startServiceDiscovery(gatt)) {
+                    if (gatt.requestMtu(DESIRED_MTU)) {
+                        gattOp = OP_MTU;
+                    } else if (!startServiceDiscovery(gatt)) {
                         failSecureSession("Service discovery could not start", "discovery_start_failed");
                     }
                 } catch (SecurityException e) {
@@ -1256,6 +1296,7 @@ public class WearTakBleClient {
         private void handleMtuChanged(BluetoothGatt gatt, int mtu, int status) {
             mtuNegotiated = (status == BluetoothGatt.GATT_SUCCESS);
             if (mtuNegotiated) negotiatedMtu = mtu;
+            if (!completeGattOp(gatt, OP_MTU)) return;
 
             if (!hasConnectPermission()) {
                 failSecureSession("Missing Bluetooth connect permission", "mtu_permission_lost");
@@ -1277,7 +1318,7 @@ public class WearTakBleClient {
         }
 
         private void handleServicesDiscovered(BluetoothGatt gatt, int status) {
-            discoveryPending = false;
+            if (!completeGattOp(gatt, OP_DISCOVERY)) return;
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failSecureSession("Service discovery failed: " + status, "service_discovery_failed_" + status);
                 return;
@@ -1329,6 +1370,7 @@ public class WearTakBleClient {
                 return;
             }
             if (!wrote) failSecureSession("writeDescriptor(CCCD) failed", "cccd_write_start_failed");
+            else gattOp = OP_CCCD;
         }
 
         @Override
@@ -1339,6 +1381,7 @@ public class WearTakBleClient {
         private void handleDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
             if (descriptor == null) return;
             if (!CCCD_UUID.equals(descriptor.getUuid())) return;
+            if (!completeGattOp(gatt, OP_CCCD)) return;
             if (descriptor.getCharacteristic() != txNotifyChar || connected) return;
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -1406,13 +1449,16 @@ public class WearTakBleClient {
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            dispatchGatt(gatt, () -> handleCharacteristicWrite(characteristic, status));
+            dispatchGatt(gatt, () -> handleCharacteristicWrite(gatt, characteristic, status));
         }
 
-        private void handleCharacteristicWrite(BluetoothGattCharacteristic characteristic, int status) {
+        private void handleCharacteristicWrite(BluetoothGatt gatt,
+                                               BluetoothGattCharacteristic characteristic, int status) {
             if (characteristic == null) return;
+            if (!RX_FROM_COMPANION_UUID.equals(characteristic.getUuid())) return;
+            if (!completeGattOp(gatt, OP_TX)) return;
             if (rxWriteChar == null) return;
-            if (!characteristic.getUuid().equals(rxWriteChar.getUuid())) return;
+            if (characteristic != rxWriteChar) return;
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 synchronized (txLock) {
@@ -1509,7 +1555,8 @@ public class WearTakBleClient {
         bluetoothGatt = null;
         servicesReady = false;
         serviceRefreshGatt = null;
-        refreshingServices = discoveryPending = false;
+        refreshingServices = refreshAfterOp = false;
+        gattOp = OP_NONE;
         if (closing != null) {
             if (hasConnectPermission()) {
                 try {
@@ -1543,7 +1590,8 @@ public class WearTakBleClient {
     private void setConnected(boolean value) {
         if (connected != value) {
             connected = value;
-            if (statusListener != null) statusListener.onConnectionStatusChanged(connected);
+            StatusListener listener = statusListener;
+            if (listener != null) listener.onConnectionStatusChanged(connected, refreshingServices);
         }
     }
 

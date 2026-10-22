@@ -37,11 +37,16 @@ cancel it. Samsung retains its own retry owner.
 
 Services Changed on a still-connected, still-bonded GATT (Traditional or Samsung,
 during setup or after readiness) first rediscovers services on that same connection
-and re-enables A11B notifications immediately, so the watch's CCCD handshake window
-is not extended. The refresh starts a new session generation, tears down the settings
+and promptly re-enables A11B notifications, without changing the watch's four-second
+CCCD watchdog. The refresh starts a new session generation, tears down the settings
 session (`connected=false`), clears the RX/TX queues and characteristics, re-arms the
-25-second setup timeout, and reuses a pending discovery rather than issuing another.
-Callbacks and writes from the old database cannot mark the new session ready. The
+25-second setup timeout, and drains any outstanding MTU, discovery, CCCD or TX
+completion before issuing fresh discovery. A pending pre-change discovery result
+is discarded, not reused. This serial handoff prevents its completion from answering
+a new request even if Android reuses characteristic objects or handles. Android has
+no request token; this relies on one completion per issued operation, not protection
+against arbitrary duplicate platform callbacks. A missing completion fails closed at
+the setup timeout; waiting for it may still exceed the watch's unchanged watchdog. The
 Samsung owner is not reset by that transient disconnect, but any refresh failure or
 timeout still reaches it. Each GATT connection gets one in-place refresh; readiness on
 the same GATT does not restore it, so a second Services Changed falls back to the
