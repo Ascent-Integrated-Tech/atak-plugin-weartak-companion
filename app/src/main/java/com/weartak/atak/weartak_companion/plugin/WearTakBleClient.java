@@ -211,17 +211,17 @@ public class WearTakBleClient {
     }
 
     private void savePreferredAddress(String addr) {
-        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(baseContext, pairingPreferences);
         prefs.edit().putString(KEY_PREFERRED_ADDRESS, addr).apply();
     }
 
     private void clearPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(baseContext, pairingPreferences);
         prefs.edit().remove(KEY_PREFERRED_ADDRESS).apply();
     }
 
     public String getPreferredAddress() {
-        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(baseContext, pairingPreferences);
         return prefs.getString(KEY_PREFERRED_ADDRESS, null);
     }
 
@@ -1441,12 +1441,12 @@ public class WearTakBleClient {
     // -------------------- pairing storage --------------------
 
     public String getPairedUid() {
-        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(baseContext, pairingPreferences);
         return prefs.getString(KEY_PAIRED_UID, null);
     }
 
     private void savePairedUid(String uid, String callsign) {
-        SharedPreferences prefs = appContext.getSharedPreferences(pairingPreferences, Context.MODE_PRIVATE);
+        SharedPreferences prefs = PluginPrefs.get(baseContext, pairingPreferences);
         prefs.edit()
                 .putString(KEY_PAIRED_UID, uid)
                 .putString(KEY_PAIRED_CALLSIGN, callsign)

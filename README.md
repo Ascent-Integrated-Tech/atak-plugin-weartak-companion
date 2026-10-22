@@ -90,6 +90,24 @@ stopping the transport; stopped/generation-fenced probe and retry callbacks cann
 reconnect after switching to Samsung or Garmin. The three-choice connection-mode
 dialog uses ATAK's activity context so it has a valid host window token.
 
+PAIRING PREFERENCE STORAGE
+
+Pairing addresses, watch UID/callsign, and preferred-device display metadata use
+ATAK host-owned preferences, just like connection mode/pause and reconnect state.
+The plugin runs inside ATAK; its own package data directory can be unwritable to
+ATAK's UID even while BLE is connected. Existing preference filenames and keys
+are retained: `wtk_pairing` for the single watch, `wtk_gateway_pair_<address>` for
+each gateway peer, and `weartak_companion_prefs` for mode and device metadata.
+Host-owned values are not overwritten or imported into another peer's namespace.
+The existing legacy connection-mode read fallback is retained; no pairing or
+retry preferences are migrated from plugin-owned storage. An address that was
+never saved successfully must be rediscovered through the existing bonded A11A
+scan. A saved Samsung candidate still requires an existing system bond; saving
+it does not arm Traditional BLE retries or prove a ready connection.
+This storage correction does not establish that a reported Samsung reconnect
+failure was caused by lost preferences; restart/reconnect acceptance still
+requires hardware testing.
+
 The device pane places **Pairing Mode:** immediately below its title, with
 **BLE**, **Garmin Connect**, and **Samsung Wearable** choices. BLE places a compact Scan
 button to the right of its status, without scan/reconnect explanations.
