@@ -239,6 +239,19 @@ route. The watch validates the session, supported CoT type, chat recipient,
 and its own negotiated identity before importing positions, points, alerts,
 or chats. Session and duplicate ledgers are transient and clear on disconnect.
 
+The phone map bridge coalesces up to 128 pending point updates. Overflow marks
+already-observed points dirty rather than losing their latest state. Paced
+100 ms batches rotate through at most 128 observer entries per tick, retrying
+current eligible state without another edit or reconnect. Recovery does not
+perform repeated full-map snapshots or send deletion messages; removed,
+watch-origin, `nevercot`, and unsupported items are excluded. This recovers
+map-bridge saturation, not downstream per-peer transport backpressure.
+Run `python scripts\tests\test_gateway_map_bridge.py` from the repository root
+for deterministic saturation, fairness, coalescing, removal, and restart
+regressions. It requires a JDK and compiles the production bridge against
+isolated scheduling/ATAK test doubles; it does not validate device transport
+or native ATAK export.
+
 Gateway pairing/retry preferences are separate from traditional single-watch
 preferences (`wtk_gateway_v1`, `wtk_gateway_retry_<address>`, and
 `wtk_gateway_pair_<address>`). Existing traditional reconnect policy still
