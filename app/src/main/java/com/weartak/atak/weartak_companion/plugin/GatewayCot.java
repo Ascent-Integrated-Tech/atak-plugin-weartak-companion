@@ -40,6 +40,18 @@ final class GatewayCot {
         }
     }
 
+    static final class ReplayEvent {
+        final String uid;
+        final String type;
+        final long staleMillis;
+
+        ReplayEvent(String uid, String type, long staleMillis) {
+            this.uid = uid;
+            this.type = type;
+            this.staleMillis = staleMillis;
+        }
+    }
+
     static boolean isPositionType(String type) {
         return "a-f-G-U-C".equals(type) || type.startsWith("a-f-G-U-C-")
                 || "a-f-G-E".equals(type) || type.startsWith("a-f-G-E-");
@@ -50,6 +62,10 @@ final class GatewayCot {
     }
 
     static boolean isChatType(String type) { return "b-t-f".equals(type); }
+
+    static boolean chatAllowsRecipient(ChatRoute chat, String peerUid) {
+        return chat.broadcast || chat.recipients.contains(peerUid);
+    }
 
     static boolean supportedType(String type) {
         return type != null && (PhoneMarkerRelay.supportedType(type)
@@ -82,6 +98,25 @@ final class GatewayCot {
                 throw new IllegalArgumentException("Watch alert is not owned by negotiated identity");
         } else if (isChatType(type) && !peerUid.equals(readChat(xml).senderUid)) {
             throw new IllegalArgumentException("Watch chat sender does not match negotiated identity");
+        }
+    }
+
+    static ReplayEvent readReplayEvent(String xml) {
+        try {
+            Element root = document(xml).getDocumentElement();
+            if (!"event".equals(root.getTagName()))
+                throw new IllegalArgumentException("Unsupported Gateway replay CoT");
+            String uid = required(root.getAttribute("uid"), "Event UID");
+            String type = required(root.getAttribute("type"), "Event type");
+            if (!supportedType(type))
+                throw new IllegalArgumentException("Unsupported Gateway replay CoT");
+            String stale = root.getAttribute("stale");
+            long staleMillis = stale.isEmpty() ? Long.MAX_VALUE : Instant.parse(stale).toEpochMilli();
+            return new ReplayEvent(uid, type, staleMillis);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Malformed Gateway replay CoT", e);
         }
     }
 
