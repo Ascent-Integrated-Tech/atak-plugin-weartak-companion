@@ -51,6 +51,8 @@ Samsung owner is not reset by that transient disconnect, but any refresh failure
 timeout still reaches it. Each GATT connection gets one in-place refresh; readiness on
 the same GATT does not restore it, so a second Services Changed falls back to the
 bounded close/retry behaviour above. An unbonded peer still fails closed.
+This recovery does not address the separate, unproven service-disable case ("Case A");
+watch enablement, managed-configuration policy and service lifecycle are unchanged.
 
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no
