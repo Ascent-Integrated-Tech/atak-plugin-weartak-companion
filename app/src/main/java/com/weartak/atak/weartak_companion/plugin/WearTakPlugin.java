@@ -1271,7 +1271,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
         watchLocationDiagnostics = null;
-        locationDiagnostics.start(pluginContext, diagnosticSession, bleSession, snapshot -> {
+        locationDiagnostics.start(MapView.getMapView().getContext(), diagnosticSession, bleSession, snapshot -> {
             if (owner != bleClient || owner.getReadySession() != bleSession ||
                     !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
                     !diagnosticSession.equals(locationDiagnostics.session())) return;

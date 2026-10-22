@@ -1,10 +1,16 @@
 package com.weartak.atak.weartak_companion.plugin;
 
+import android.Manifest;
+import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.pm.PackageManager;
 import android.location.GnssMeasurementsEvent;
 import android.location.GnssStatus;
 import android.location.Location;
 import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -13,9 +19,71 @@ import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 public class PhoneGnssDiagnosticsTest {
     private static final String SESSION = "01234567-89ab-cdef-0123-456789abcdef";
+
+    @Test public void startUsesHostServicesWithoutDereferencingNullableApplicationContext() throws Exception {
+        LocationManager manager = mock(LocationManager.class);
+        when(manager.isProviderEnabled(LocationManager.GPS_PROVIDER)).thenReturn(true);
+        Context host = hostContext(manager, PackageManager.PERMISSION_GRANTED);
+        assertNull(host.getApplicationContext());
+        PhoneGnssDiagnostics diagnostics = new PhoneGnssDiagnostics();
+        Handler handler = mock(Handler.class);
+        set(diagnostics, "handler", handler);
+        AtomicInteger reports = new AtomicInteger();
+
+        diagnostics.start(host, SESSION, 7L, envelope -> reports.incrementAndGet());
+
+        assertEquals(SESSION, diagnostics.session());
+        assertEquals(7L, diagnostics.readySession());
+        assertEquals(1, reports.get());
+        assertTrue(diagnostics.payloadSnapshot().getBoolean("providerAvailable"));
+        LocationListener observer = (LocationListener) get(diagnostics, "passiveFixListener");
+        assertNotNull(observer);
+        verify(manager).requestLocationUpdates(eq(LocationManager.PASSIVE_PROVIDER), eq(30_000L),
+                eq(0f), same(observer), any());
+        verify(handler).postDelayed(any(Runnable.class), eq(30_000L));
+
+        diagnostics.stop();
+        verify(manager).removeUpdates(observer);
+        assertNull(get(diagnostics, "locationManager"));
+        assertNull(get(diagnostics, "passiveFixListener"));
+        assertNull(diagnostics.session());
+    }
+
+    @Test public void startWithHostPermissionDeniedReportsUnavailableWithoutRegistering() throws Exception {
+        LocationManager manager = mock(LocationManager.class);
+        PhoneGnssDiagnostics diagnostics = new PhoneGnssDiagnostics();
+        set(diagnostics, "handler", mock(Handler.class));
+        AtomicInteger reports = new AtomicInteger();
+
+        diagnostics.start(hostContext(manager, PackageManager.PERMISSION_DENIED),
+                SESSION, 7L, envelope -> reports.incrementAndGet());
+
+        assertEquals(1, reports.get());
+        assertEquals("Location permission not granted", diagnostics.payloadSnapshot().getString("error"));
+        assertNull(get(diagnostics, "passiveFixListener"));
+        verifyNoInteractions(manager);
+        diagnostics.stop();
+    }
+
+    private static Context hostContext(LocationManager manager, int permission) {
+        return new ContextWrapper(null) {
+            @Override public Context getApplicationContext() { return null; }
+            @Override public Object getSystemService(String name) {
+                assertEquals(Context.LOCATION_SERVICE, name);
+                return manager;
+            }
+            @Override public int checkSelfPermission(String name) {
+                assertTrue(Manifest.permission.ACCESS_FINE_LOCATION.equals(name) ||
+                        Manifest.permission.ACCESS_COARSE_LOCATION.equals(name));
+                return permission;
+            }
+        };
+    }
 
     @Test
     public void unsupportedGnssApiReportsUnavailableWithoutCreatingCallbacks() throws Exception {
