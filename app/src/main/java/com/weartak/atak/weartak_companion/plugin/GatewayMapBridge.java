@@ -80,6 +80,7 @@ final class GatewayMapBridge {
         }
     }
     synchronized boolean hasOrigin(String uid) { return origins.contains(uid); }
+    synchronized boolean allowsPhoneEvent(String uid) { return origins.allowsPhoneEvent(uid); }
     synchronized void forgetPeer(String address) { origins.forgetPeer(address); }
     private void observe(MapItem item) {
         if (!(item instanceof PointMapItem) || observed.containsKey(item)) return;

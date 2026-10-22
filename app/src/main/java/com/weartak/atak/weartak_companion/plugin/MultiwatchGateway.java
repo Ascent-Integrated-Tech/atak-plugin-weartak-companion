@@ -122,7 +122,7 @@ final class MultiwatchGateway {
     private void fanoutChat(GatewayCot.ChatRoute chat, Peer source) {
         for (Peer peer : peers.values()) {
             if (peer == source || !peer.negotiated) continue;
-            if (chat.broadcast || chat.recipients.contains(peer.uid)) {
+            if (GatewayCot.chatAllowsRecipient(chat, peer.uid)) {
                 if (!peer.fanout.offer(chat.uid, chat.xml)) {
                     peer.error = "Chat output queue full (128); message not queued";
                     Log.w(TAG, peer.device.address + ": " + peer.error);
@@ -157,8 +157,7 @@ final class MultiwatchGateway {
             com.atakmap.coremap.cot.event.CotEvent event = GatewayCot.validate(xml);
             if (!GatewayCot.isEmergencyType(event.getType()))
                 throw new IllegalArgumentException("Unsupported Gateway alert type: " + event.getType());
-            if (maps.hasOrigin(event.getUID())) return;
-            maps.origin(event.getUID(), "phone-alert");
+            if (!maps.allowsPhoneEvent(event.getUID())) return;
             fanout(event.getUID(), xml, null);
         } catch (RuntimeException e) {
             error("Alert not forwarded: " + e.getMessage());
@@ -264,7 +263,8 @@ final class MultiwatchGateway {
                             for (Peer other : peers.values()) {
                                 if (other == peer || !other.negotiated) continue;
                                 for (Map.Entry<String, String> previous : other.received.entrySet()) {
-                                    if (!previous.getKey().equals(peer.uid)
+                                    if (GatewayReplay.allows(previous.getValue(), peer.uid,
+                                            System.currentTimeMillis())
                                             && !peer.fanout.offer(previous.getKey(), previous.getValue()))
                                         peer.error = "Map snapshot queue full (128)";
                                 }

@@ -19,10 +19,17 @@ final class GatewayOrigins {
         try {
             JSONObject saved = new JSONObject(preferences.getString("origins", "{}"));
             if (saved.length() > 2048) throw new IllegalStateException("Gateway origin ledger exceeds limit");
+            boolean migratedPhoneAlerts = false;
             for (java.util.Iterator<String> keys = saved.keys(); keys.hasNext();) {
                 String uid = keys.next();
-                owners.put(uid, saved.getString(uid));
+                String owner = saved.getString(uid);
+                if ("phone-alert".equals(owner)) {
+                    migratedPhoneAlerts = true;
+                } else {
+                    owners.put(uid, owner);
+                }
             }
+            if (migratedPhoneAlerts) persist();
         } catch (JSONException e) {
             throw new IllegalStateException("Gateway origin ledger is corrupt", e);
         }
@@ -40,6 +47,7 @@ final class GatewayOrigins {
         }
     }
     boolean contains(String uid) { return owners.containsKey(uid); }
+    boolean allowsPhoneEvent(String uid) { return !contains(uid); }
     void forgetPeer(String peer) {
         boolean changed = false;
         java.util.Iterator<Map.Entry<String, String>> iterator = owners.entrySet().iterator();
