@@ -199,10 +199,10 @@ class RollingReleaseTests(unittest.TestCase):
         self.assertEqual(list(github.uploaded), [asset_name])
         self.assertFalse(github.release["draft"])
         self.assertFalse(github.release["prerelease"])
-        self.assertIn("SHA-256:", github.body)
+        self.assertIn("SHA256:", github.body)
         self.assertIn(publisher.RELEASE_OWNERSHIP_MARKER, github.body)
-        self.assertIn("APK version: `5.6.0 (abc) - [5.6.0]` (versionCode `123`)", github.body)
-        self.assertIn("Pipeline: [#100]", github.body)
+        self.assertIn("APK version: **5.6.0 (abc) - [5.6.0]** (versionCode **123**)", github.body)
+        self.assertIn("pipelines/100", github.body)
         self.assertEqual(github.test_notifications, [
             {"release_id": 77, "pipeline_id": "100", "body": github.body}
         ])
@@ -213,7 +213,7 @@ class RollingReleaseTests(unittest.TestCase):
         with patch.object(publisher, "verify_signer"):
             with self.assertRaisesRegex(publisher.PublishError, "test notification failed"):
                 publisher.publish(self.env, self.gitlab, github)
-            self.assertIn("Pipeline: [#100]", github.body)
+            self.assertIn("pipelines/100", github.body)
             self.assertEqual(len(github.assets), 1)
             github.dispatch_failure = False
             publisher.publish(self.env, self.gitlab, github)
@@ -412,10 +412,10 @@ class RollingReleaseTests(unittest.TestCase):
         asset = github.assets[0]
         self.assertEqual(len(github.assets), 1)
         self.assertEqual(asset["id"], asset_id)
-        self.assertEqual(asset["label"], publisher.ASSET_DISPLAY_LABEL)
+        self.assertEqual(asset["label"], asset["name"])
         self.assertNotIn("sha256=", asset["label"])
-        self.assertIn("[Download APK](", before)
-        self.assertIn("- SHA-256: `" + asset["digest"].removeprefix("sha256:") + "`", before)
+        self.assertNotIn("[Download APK](", before)
+        self.assertIn("- SHA256: `" + asset["digest"].removeprefix("sha256:") + "`", before)
         self.assertEqual(github.body, before)
 
     def test_legacy_same_pipeline_asset_is_relabeled_without_reupload(self) -> None:
@@ -428,7 +428,7 @@ class RollingReleaseTests(unittest.TestCase):
             publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.uploaded, {})
         self.assertEqual(github.deleted, [])
-        self.assertEqual(asset["label"], publisher.ASSET_DISPLAY_LABEL)
+        self.assertEqual(asset["label"], asset["name"])
         self.assertEqual(github.download_asset(1), content)
 
     def test_readable_label_requires_digest_and_cleanup_verifies_bytes(self) -> None:
@@ -460,11 +460,11 @@ class RollingReleaseTests(unittest.TestCase):
 
     def test_watch_style_notes_preserve_manual_content_and_are_idempotent(self) -> None:
         checksum = "a" * 64
-        generated = publisher.release_description("https://example/apk", "100", "b" * 40,
+        generated = publisher.release_description("100", "b" * 40,
                                               "5.6.0", checksum, "123", "42")
         self.assertIn("stable ATAK Companion CIV develop-channel build", generated)
-        self.assertIn("project pipeline IID `42`", generated)
-        self.assertIn("source SHA above is authoritative", generated)
+        self.assertIn("project pipeline **42**", generated)
+        self.assertIn("source commit above is authoritative", generated)
         self.assertNotIn("managed APK sha256=", generated)
         old = "Manual preface\n" + publisher.RELEASE_OWNERSHIP_MARKER + (
             "\n\nOld generated notes\n- SHA-256: `" + checksum + "`\n\nManual suffix\n")
@@ -494,7 +494,7 @@ class RollingReleaseTests(unittest.TestCase):
             publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.release["name"],
                          "TAK.gov Forge CI/CD Pipeline Release (5.6.0-p25)")
-        self.assertIn("GitLab pipeline `100` (project pipeline IID `25`)", github.body)
+        self.assertIn("GitLab pipeline **100** (project pipeline **25**)", github.body)
         self.assertTrue(publisher.expected_release_title(publisher.RELEASE_TITLE))
         self.assertFalse(publisher.expected_release_title("Unrelated release"))
         self.assertEqual(github.body.count(publisher.RELEASE_END_MARKER), 1)
@@ -518,8 +518,8 @@ class RollingReleaseTests(unittest.TestCase):
         with patch.object(publisher, "verify_signer"):
             name = publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(name, "WearTAK-Companion-5.6.0-p27.apk")
-        self.assertIn(name, github.body)
-        self.assertEqual(github.assets[0]["label"], publisher.ASSET_DISPLAY_LABEL)
+        self.assertEqual(github.assets[0]["label"], name)
+        self.assertIn("Install the APK above.", github.body)
 
     def test_missing_iid_or_mismatched_manifest_version_fails_before_upload(self) -> None:
         github = FakeGitHub()
@@ -533,15 +533,15 @@ class RollingReleaseTests(unittest.TestCase):
                     publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.uploaded, {})
 
-    def test_previously_linked_legacy_asset_is_not_cleaned_up(self) -> None:
+    def test_superseded_owned_legacy_asset_is_cleaned_up(self) -> None:
         legacy = make_owned_asset(1, "99", legacy=True)
         github = FakeGitHub([legacy])
         github.create_release()
         github.release["body"] = publisher.RELEASE_OWNERSHIP_MARKER
         with patch.object(publisher, "verify_signer"):
             publisher.publish(self.env, self.gitlab, github)
-        self.assertEqual(github.deleted, [])
-        self.assertIn(legacy, github.assets)
+        self.assertEqual(github.deleted, [1])
+        self.assertNotIn(legacy, github.assets)
 
     def test_same_iid_different_bytes_are_never_replaced(self) -> None:
         github = FakeGitHub()
@@ -554,6 +554,29 @@ class RollingReleaseTests(unittest.TestCase):
                     publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.uploaded, original)
         self.assertEqual(github.deleted, [])
+
+    def test_watch_style_build_line_still_prevents_stale_rollback(self) -> None:
+        github = FakeGitHub()
+        github.create_release()
+        github.release["body"] = publisher.release_description(
+            "101", "a" * 40, "5.6.0", "a" * 64, "123", "28")
+        with self.assertRaisesRegex(publisher.PublishError, "newer pipeline"):
+            publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(github.uploaded, {})
+        self.assertEqual(github.deleted, [])
+
+    def test_filename_label_owned_cleanup_leaves_one_apk_but_preserves_manual_assets(self) -> None:
+        old = make_owned_asset(1, "99")
+        old["label"] = old["name"]
+        manual = {"id": 2, "name": "manual.apk", "label": "Do not touch"}
+        github = FakeGitHub([old, manual])
+        github.create_release()
+        github.release["body"] = publisher.RELEASE_OWNERSHIP_MARKER
+        with patch.object(publisher, "verify_signer"):
+            publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(github.deleted, [1])
+        self.assertIn(manual, github.assets)
+        self.assertEqual(sum(a["label"] == a["name"] for a in github.assets), 1)
 
 
 if __name__ == "__main__":
