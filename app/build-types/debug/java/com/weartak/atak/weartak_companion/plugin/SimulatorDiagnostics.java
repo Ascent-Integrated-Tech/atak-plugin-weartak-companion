@@ -9,7 +9,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
@@ -61,7 +60,7 @@ final class SimulatorDiagnostics {
                         && !RELEASE_TEST.equals(action) && !ROUTE_TEST.equals(action)) return;
                 if (Settings.Global.getInt(context.getContentResolver(), "wifi_on", 1) != 0
                         || Settings.Global.getInt(context.getContentResolver(), "mobile_data", 1) != 0) {
-                    Log.e(TAG, "Refusing synthetic traffic: disable emulator Wi-Fi and mobile data first");
+                    LogX.e(TAG, "Refusing synthetic traffic: disable emulator Wi-Fi and mobile data first");
                     return;
                 }
                 if (USERS.equals(action)) {
@@ -101,22 +100,22 @@ final class SimulatorDiagnostics {
                     }
                     JSONObject envelope = new JSONObject().put("msgType", type).put("payload", payload);
                     bridge.handleJsonFromWearTak(envelope.toString());
-                    Log.i(TAG, type + " injection returned to UI thread");
+                    LogX.i(TAG, type + " injection returned to UI thread");
                     main.postDelayed(() -> {
                         if (ACTION.equals(action)) {
                             MapItem item = map.getRootGroup().deepFindUID(UID);
                             boolean correct = item instanceof PointMapItem
                                     && Math.abs(((PointMapItem) item).getPoint().getLatitude() - 38.5) < 0.000001
                                     && Math.abs(((PointMapItem) item).getPoint().getLongitude() + 77.2) < 0.000001;
-                            Log.i(TAG, correct
+                            LogX.i(TAG, correct
                                     ? "PASS: watch point preserved selected coordinates; UI responsive"
                                     : "FAIL: watch point missing or moved");
                         } else {
-                            Log.i(TAG, type + " UI heartbeat; inspect dispatch logs for outcome");
+                            LogX.i(TAG, type + " UI heartbeat; inspect dispatch logs for outcome");
                         }
                     }, 2000);
                 } catch (JSONException e) {
-                    Log.e(TAG, "Could not build simulated watch message", e);
+                    LogX.e(TAG, "Could not build simulated watch message", e);
                 }
             }
         };
@@ -129,7 +128,7 @@ final class SimulatorDiagnostics {
         filter.addAction(RELEASE_TEST);
         filter.addAction(ROUTE_TEST);
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED);
-        Log.i(TAG, "Emulator point injection available");
+        LogX.i(TAG, "Emulator point injection available");
     }
 
     private void runPhoneManagementReleaseTest() {
@@ -159,20 +158,20 @@ final class SimulatorDiagnostics {
         if (result == PhoneManagementRelease.Result.SUCCEEDED) routeConnected = false;
         checkRelease(result == PhoneManagementRelease.Result.SUCCEEDED && !routeConnected,
                 "matching affirmative ack permits route disconnect");
-        Log.i(TAG, "Synthetic release acknowledgements only; no BLE watch is connected");
+        LogX.i(TAG, "Synthetic release acknowledgements only; no BLE watch is connected");
     }
 
     private void checkRelease(boolean passed, String description) {
-        Log.i(TAG, (passed ? "PASS: " : "FAIL: ") + description);
+        LogX.i(TAG, (passed ? "PASS: " : "FAIL: ") + description);
     }
 
     private void runChatEchoTest(MapView map, BleCotBridge bridge) {
         if (chatEchoSuppressor == null || !chatEchoSuppressor.isActive()) {
-            Log.e(TAG, "Chat echo experiment requires the production single-watch filter");
+            LogX.e(TAG, "Chat echo experiment requires the production single-watch filter");
             return;
         }
         if (echoTestRunning) {
-            Log.w(TAG, "Chat echo test already running");
+            LogX.w(TAG, "Chat echo test already running");
             return;
         }
         echoTestRunning = true;
@@ -185,7 +184,7 @@ final class SimulatorDiagnostics {
                 + "\"msg\":\"SIMULATOR CHAT ECHO " + UUID.randomUUID() + "\"}}");
         CotEvent sent = echoPrototype.lastWatchEvent();
         String messageId = sent.findDetail("__chat").getAttribute("messageId");
-        Log.i(TAG, "Echo experiment: unread before=" + unreadBefore);
+        LogX.i(TAG, "Echo experiment: unread before=" + unreadBefore);
         CommsMapComponent.getInstance().sendCoTInternally(sent, new Bundle());
         CommsMapComponent.getInstance().sendCoTInternally(echoPrototype.lastWatchEvent(), new Bundle());
         main.postDelayed(() -> echoStep(() -> {
@@ -194,7 +193,7 @@ final class SimulatorDiagnostics {
             for (Bundle line : ChatDatabase.getInstance(map.getContext()).getHistory("All Chat Rooms")) {
                 if (messageId.equals(line.getString("messageId"))) persisted = true;
             }
-            Log.i(TAG, (unreadBefore == unreadAfter && persisted ? "PASS" : "FAIL")
+            LogX.i(TAG, (unreadBefore == unreadAfter && persisted ? "PASS" : "FAIL")
                     + ": repeated watch echoes; unread=" + unreadAfter + "; sent history=" + persisted);
             CotEvent incoming = echoPrototype.lastWatchEvent();
             String incomingId = UUID.randomUUID().toString();
@@ -208,7 +207,7 @@ final class SimulatorDiagnostics {
             CommsMapComponent.getInstance().sendCoTInternally(incoming, new Bundle());
             main.postDelayed(() -> echoStep(() -> {
                 int unreadReply = ChatManagerMapComponent.getChatBroadcastContact().getUnreadCount();
-                Log.i(TAG, (unreadReply == unreadAfter + 1 ? "PASS" : "FAIL")
+                LogX.i(TAG, (unreadReply == unreadAfter + 1 ? "PASS" : "FAIL")
                         + ": new incoming message; unread=" + unreadReply);
                 ChatManagerMapComponent.getInstance().sendMessage(
                         "SIMULATOR ORDINARY PHONE SEND " + UUID.randomUUID(),
@@ -218,7 +217,7 @@ final class SimulatorDiagnostics {
                         echoPrototype.lastOutgoingEvent(), new Bundle());
                 main.postDelayed(() -> echoStep(() -> {
                     int unreadPhone = ChatManagerMapComponent.getChatBroadcastContact().getUnreadCount();
-                    Log.i(TAG, (unreadPhone == unreadReply + 1 ? "PASS" : "FAIL")
+                    LogX.i(TAG, (unreadPhone == unreadReply + 1 ? "PASS" : "FAIL")
                             + ": ordinary phone send echo not filtered; unread=" + unreadPhone);
                     stopEchoPrototype();
                     chatEchoSuppressor.stop();
@@ -229,7 +228,7 @@ final class SimulatorDiagnostics {
                     CommsMapComponent.getInstance().sendCoTInternally(afterStop, new Bundle());
                     main.postDelayed(() -> echoStep(() -> {
                         int unreadRestored = ChatManagerMapComponent.getChatBroadcastContact().getUnreadCount();
-                        Log.i(TAG, (unreadRestored == unreadPhone + 1 ? "PASS" : "FAIL")
+                        LogX.i(TAG, (unreadRestored == unreadPhone + 1 ? "PASS" : "FAIL")
                                 + ": suppressor stop restores ATAK receiver; unread=" + unreadRestored);
                         chatEchoSuppressor.start();
                         echoPrototype = new WatchChatEchoPrototype(chatEchoSuppressor);
@@ -245,7 +244,7 @@ final class SimulatorDiagnostics {
                         main.postDelayed(() -> echoStep(() -> {
                             int afterRestartEcho =
                                     ChatManagerMapComponent.getChatBroadcastContact().getUnreadCount();
-                            Log.i(TAG, (afterRestartEcho == beforeRestartEcho ? "PASS" : "FAIL")
+                            LogX.i(TAG, (afterRestartEcho == beforeRestartEcho ? "PASS" : "FAIL")
                                     + ": suppressor restart filters a new watch echo; unread="
                                     + afterRestartEcho);
                             stopEchoPrototype();
@@ -261,7 +260,7 @@ final class SimulatorDiagnostics {
         try {
             step.run();
         } catch (RuntimeException e) {
-            Log.e(TAG, "FAIL: chat echo experiment could not complete", e);
+            LogX.e(TAG, "FAIL: chat echo experiment could not complete", e);
             stopEchoPrototype();
             echoTestRunning = false;
         }

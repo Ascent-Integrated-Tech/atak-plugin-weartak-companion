@@ -15,7 +15,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Base64;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -38,6 +37,10 @@ import com.atakmap.android.ipc.AtakBroadcast;
 import com.atakmap.comms.CotServiceRemote;
 import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.android.maps.Marker;
+import com.atakmap.android.missionpackage.api.MissionPackageApi;
+import com.atakmap.android.missionpackage.api.ToastSaveCallback;
+import com.atakmap.android.missionpackage.file.MissionPackageManifest;
+import com.atakmap.coremap.filesystem.FileSystemUtils;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -46,6 +49,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -72,6 +76,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private static final String TAG = "WTK/Plugin";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile Boolean lastSettingsApplyResult = null;
+    private CompanionDiagnosticLogger diagnosticLogger;
+    private Button loggingButton;
 
     private WearTakBleClient bleClient;
     private SystemBondedWatchConnection systemBondedConnection;
@@ -177,7 +183,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 try {
                     event = CotEvent.parse(xml);
                 } catch (Exception e) {
-                    Log.w(TAG, "Invalid phone emergency notification", e);
+                    LogX.w(TAG, "Invalid phone emergency notification", e);
                     return;
                 }
             } else {
@@ -362,7 +368,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void releaseNotice(String message) {
-        Log.i(TAG, message);
+        LogX.i(TAG, message);
         if (settingsStatusTV != null) settingsStatusTV.setText(message);
         Toast.makeText(MapView.getMapView().getContext(), message, Toast.LENGTH_LONG).show();
     }
@@ -447,7 +453,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 failManagementRelease("Could not send release; route left connected.");
             }
         } catch (JSONException e) {
-            Log.e(TAG, "Could not encode management release", e);
+            LogX.e(TAG, "Could not encode management release", e);
             failManagementRelease("Could not encode release; route left connected.");
         }
     }
@@ -561,10 +567,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         assert serviceController != null;
         uiService = serviceController.getService(IHostUIService.class); // safe refresh
         if (pluginContext == null) {
-            Log.w(TAG, "onStart: pluginContext is null; skipping BLE init");
+            LogX.w(TAG, "onStart: pluginContext is null; skipping BLE init");
             return;
         }
 
+        initializeDiagnosticLogger();
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
         SharedPreferences prefs = systemBondedPreferences();
         setupPurpose = prefs.getBoolean("setup_purpose", false);
@@ -590,7 +597,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             try {
                 if (chatEchoSuppressor != null) chatEchoSuppressor.stop();
             } catch (RuntimeException e) {
-                Log.e(TAG, "Could not restore ATAK chat listener cleanly", e);
+                LogX.e(TAG, "Could not restore ATAK chat listener cleanly", e);
             } finally {
                 bleCotBridge.setWatchChatSend(Runnable::run);
             }
@@ -602,7 +609,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             bleCotBridge.setWatchChatSend(chatEchoSuppressor::send);
         } catch (RuntimeException e) {
             bleCotBridge.setWatchChatSend(Runnable::run);
-            Log.e(TAG, "Could not install watch chat echo suppression; watch echoes may notify ATAK", e);
+            LogX.e(TAG, "Could not install watch chat echo suppression; watch echoes may notify ATAK", e);
         }
     }
 
@@ -675,7 +682,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         if (bleCotBridge == null) {
             bleCotBridge = new BleCotBridge();
-            Log.i(TAG, "BleCotBridge initialized in plugin");
+            LogX.i(TAG, "BleCotBridge initialized in plugin");
         }
 
         if (bloodhoundBridge == null) {
@@ -700,7 +707,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
             @Override
             public void onReady() {
-                Log.i(TAG, "BLE READY");
+                LogX.i(TAG, "BLE READY");
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!bleClient.isConnected()) return;
@@ -724,7 +731,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 if (!connectionModes.isCurrent(token) || !settingsSession.isCurrent(settingsToken)) return;
                 if (incomingOwner == null || incomingOwner != bleClient || incomingSession < 0
                         || incomingOwner.getReadySession() != incomingSession) return;
-                Log.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
+                LogX.d(TAG, "RX JSON bytes=" + jsonLine.getBytes(StandardCharsets.UTF_8).length);
                 try {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
                     String diagnosticType = pointEnvelope.optString("msgType",
@@ -751,7 +758,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                     if ("marker_delete".equals(pointEnvelope.optString("msg_type"))) {
                         if (phoneMarkerRelay != null) phoneMarkerRelay.receiveDeletion(jsonLine);
-                        else Log.w(TAG, "Point relay unavailable for deletion");
+                        else LogX.w(TAG, "Point relay unavailable for deletion");
                         return;
                     }
                     if ("marker_delete_ack".equals(pointEnvelope.optString("msg_type"))) {
@@ -759,7 +766,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         return;
                     }
                 } catch (org.json.JSONException e) {
-                    Log.w(TAG, "Invalid point envelope", e);
+                    LogX.w(TAG, "Invalid point envelope", e);
                     return;
                 }
                 BloodhoundBridge bridge = bloodhoundBridge;
@@ -770,7 +777,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     try {
                         bleCotBridge.handleJsonFromWearTak(jsonLine);
                     } catch (Throwable t) {
-                        Log.w(TAG, "BleCotBridge threw while handling RX JSON", t);
+                        LogX.w(TAG, "BleCotBridge threw while handling RX JSON", t);
                     }
                 }
 
@@ -834,7 +841,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
 
                 } catch (Throwable t) {
-                    Log.w(TAG, "onJson parse failed", t);
+                    LogX.w(TAG, "onJson parse failed", t);
                 }
                 });
             }
@@ -929,7 +936,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     new SystemBondedWatchConnection.Listener() {
                         @Override public void onStatus(String message) {
                             if (!connectionModes.isCurrent(token)) return;
-                            Log.i(TAG, message);
+                            LogX.i(TAG, message);
                             updateSystemBondedControl();
                         }
                         @Override public void onConnecting(WearTakBleClient.DiscoveredDevice device) {
@@ -1190,11 +1197,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
         } else if (action == PhoneSettingsHandshake.Action.FAILED) {
             String message = "Watch management sync failed. Refresh settings or reconnect to retry.";
-            Log.e(TAG, message);
+            LogX.e(TAG, message);
             if (settingsStatusTV != null) settingsStatusTV.setText(message);
             Toast.makeText(MapView.getMapView().getContext(), message, Toast.LENGTH_LONG).show();
         } else if (action == PhoneSettingsHandshake.Action.CONFIRMED) {
-            Log.i(TAG, "Watch phone management confirmed by acknowledgement and settings snapshot");
+            LogX.i(TAG, "Watch phone management confirmed by acknowledgement and settings snapshot");
             if (settingsStatusTV != null) settingsStatusTV.setText("Phone management confirmed on watch.");
             phoneSettingsRetryJson = null;
         }
@@ -1225,7 +1232,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         String type = envelope.optString("msgType", envelope.optString("msg_type", ""));
         String session = envelope.optString("session", null);
         if (!LocationDiagnosticsProtocol.isValidSession(session)) {
-            Log.w(TAG, "Ignoring diagnostics message with invalid session token");
+            LogX.w(TAG, "Ignoring diagnostics message with invalid session token");
             return;
         }
         if (LocationDiagnosticsProtocol.HELLO.equals(type)) {
@@ -1236,7 +1243,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             JSONObject valid = LocationDiagnosticsProtocol.parse(
                     envelope, LocationDiagnosticsProtocol.HELLO, session);
             if (valid == null) {
-                Log.w(TAG, "Ignoring invalid bonded diagnostics capability request");
+                LogX.w(TAG, "Ignoring invalid bonded diagnostics capability request");
                 return;
             }
             startPhoneLocationDiagnostics(owner, bleSession, session);
@@ -1250,10 +1257,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (LocationDiagnosticsProtocol.STOP.equals(type)) {
             if (locationDiagnostics.stopForSession(envelope, bleSession)) {
                 watchLocationDiagnostics = null;
-                Log.i(TAG, "Bonded location diagnostics stopped: watch disabled diagnostics");
+                LogX.i(TAG, "Bonded location diagnostics stopped: watch disabled diagnostics");
                 updateLocationDiagnosticsUi();
             } else {
-                Log.w(TAG, "Ignoring invalid or stale watch location diagnostics stop");
+                LogX.w(TAG, "Ignoring invalid or stale watch location diagnostics stop");
             }
             return;
         }
@@ -1263,7 +1270,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 envelope, type, activeSession);
         if (valid == null || (LocationDiagnosticsProtocol.SNAPSHOT.equals(type) &&
                 valid.optJSONObject("payload") == null)) {
-            Log.w(TAG, "Ignoring invalid or stale watch location diagnostics snapshot");
+            LogX.w(TAG, "Ignoring invalid or stale watch location diagnostics snapshot");
             return;
         }
         watchLocationDiagnostics = valid.optJSONObject("payload");
@@ -1283,11 +1290,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         try {
             capability = LocationDiagnosticsProtocol.capability(diagnosticSession, true);
         } catch (org.json.JSONException | IllegalArgumentException error) {
-            Log.e(TAG, "Unable to build diagnostics capability", error);
+            LogX.e(TAG, "Unable to build diagnostics capability", error);
             return;
         }
         if (!owner.writeDiagnosticJsonLineToWatch(capability.toString(), bleSession)) {
-            Log.i(TAG, "Diagnostics capability deferred while operational BLE traffic is active");
+            LogX.i(TAG, "Diagnostics capability deferred while operational BLE traffic is active");
             if (retry == 0) {
                 mainHandler.postDelayed(() -> {
                     if (owner == bleClient && bleSession == owner.getReadySession() &&
@@ -1297,7 +1304,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                 }, 1500L);
             } else {
-                Log.w(TAG, "Dropping diagnostics capability after bounded operational-traffic deferral");
+                LogX.w(TAG, "Dropping diagnostics capability after bounded operational-traffic deferral");
             }
             return;
         }
@@ -1307,7 +1314,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     !owner.isBondedConnected() || setupPurpose || gatewayPurpose ||
                     !diagnosticSession.equals(locationDiagnostics.session())) return;
             if (!owner.writeDiagnosticJsonLineToWatch(snapshot.toString(), bleSession)) {
-                Log.i(TAG, "Dropping bounded diagnostics sample while operational BLE traffic is queued");
+                LogX.i(TAG, "Dropping bounded diagnostics sample while operational BLE traffic is queued");
             }
             updateLocationDiagnosticsUi();
         });
@@ -1318,7 +1325,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (locationDiagnostics.session() == null) return;
         locationDiagnostics.stop();
         watchLocationDiagnostics = null;
-        Log.i(TAG, "Bonded location diagnostics stopped: " + reason);
+        LogX.i(TAG, "Bonded location diagnostics stopped: " + reason);
         updateLocationDiagnosticsUi();
     }
 
@@ -1390,7 +1397,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         Intent launch = host.getPackageManager().getLaunchIntentForPackage(packageName);
         if (launch == null) {
             if (SAMSUNG_WEARABLE_PACKAGE.equals(packageName) && isSamsungInstalledPreview()) {
-                Log.i(TAG, "Samsung Wearable installed-state preview; app is not installed");
+                LogX.i(TAG, "Samsung Wearable installed-state preview; app is not installed");
                 Toast.makeText(host, "Emulator preview only: Samsung Wearable is not installed.",
                         Toast.LENGTH_LONG).show();
                 return;
@@ -1403,7 +1410,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                 packageName + ".setupwizard.SetupWizardWelcomeActivity")
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             } else {
-                Log.w(TAG, appName + " has no available launch activity");
+                LogX.w(TAG, appName + " has no available launch activity");
                 Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
                         Toast.LENGTH_LONG).show();
                 openCompanionAppListing(packageName);
@@ -1413,7 +1420,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         try {
             host.startActivity(launch);
         } catch (ActivityNotFoundException | SecurityException e) {
-            Log.e(TAG, "Unable to launch " + appName, e);
+            LogX.e(TAG, "Unable to launch " + appName, e);
             Toast.makeText(host, "Unable to open " + appName + ". Opening store listing.",
                     Toast.LENGTH_LONG).show();
             openCompanionAppListing(packageName);
@@ -1445,12 +1452,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         try {
             host.startActivity(store);
         } catch (ActivityNotFoundException e) {
-            Log.i(TAG, "Play Store unavailable; opening web listing for " + packageName);
+            LogX.i(TAG, "Play Store unavailable; opening web listing for " + packageName);
             try {
                 host.startActivity(new Intent(Intent.ACTION_VIEW,
                         Uri.parse("https://play.google.com/store/apps/details?id=" + packageName)));
             } catch (ActivityNotFoundException noBrowser) {
-                Log.e(TAG, "No application can open the store listing for " + packageName, noBrowser);
+                LogX.e(TAG, "No application can open the store listing for " + packageName, noBrowser);
                 Toast.makeText(host, "No Play Store or browser available to open the app listing.",
                         Toast.LENGTH_LONG).show();
             }
@@ -1468,7 +1475,113 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             simulatorDiagnostics.stop();
             configureWatchChatEchoSuppression(false);
             connectionModes.stop();
+            if (diagnosticLogger != null) {
+                LogX.detach(diagnosticLogger);
+                diagnosticLogger.shutdown();
+                diagnosticLogger = null;
+            }
         });
+    }
+
+    private void initializeDiagnosticLogger() {
+        if (diagnosticLogger != null) return;
+        diagnosticLogger = new CompanionDiagnosticLogger(() -> {
+            File root = FileSystemUtils.getRoot();
+            if (root == null) throw new IOException("ATAK storage is unavailable");
+            return new File(root, "companion-logs");
+        }, error -> {
+            LogX.e(TAG, "Companion diagnostic capture stopped: " + error.getMessage(), error);
+            mainHandler.post(() -> Toast.makeText(MapView.getMapView().getContext(),
+                    pluginContext.getString(R.string.log_capture_problem, error.getMessage()),
+                    Toast.LENGTH_LONG).show());
+        });
+        LogX.attach(diagnosticLogger);
+        updateLoggingButton();
+    }
+
+    private String diagnosticMetadata() {
+        Context host = MapView.getMapView().getContext();
+        try {
+            String atakVersion = host.getPackageManager()
+                    .getPackageInfo(host.getPackageName(), 0).versionName;
+            return "Plugin version: " + BuildConfig.VERSION_NAME
+                    + "\nATAK version: " + atakVersion
+                    + "\nDevice model: " + Build.MANUFACTURER + " " + Build.MODEL
+                    + "\nAndroid version: " + Build.VERSION.RELEASE
+                    + " (API " + Build.VERSION.SDK_INT + ")";
+        } catch (PackageManager.NameNotFoundException error) {
+            throw new IllegalStateException("Cannot read ATAK version", error);
+        }
+    }
+
+    private void onLoggingClicked() {
+        CompanionDiagnosticLogger logger = diagnosticLogger;
+        if (logger == null || logger.isBusy()) return;
+        loggingButton.setEnabled(false);
+        if (logger.isLogging()) {
+            loggingButton.setText(R.string.finalizing_log);
+            loggingButton.setContentDescription(pluginContext.getString(R.string.finishing_log_description));
+            logger.stop((file, error) -> {
+                MissionPackageManifest manifest = null;
+                IOException failure = error;
+                if (failure == null) {
+                    try {
+                        if (file == null || !file.isFile())
+                            throw new IOException("Companion log file is unavailable");
+                        manifest = MissionPackageApi.CreateTempManifest("Companion Log " + file.getName());
+                        if (manifest == null || !manifest.addFile(file, "text/plain", null))
+                            throw new IOException("Cannot add Companion log to ATAK data package");
+                    } catch (IOException | RuntimeException problem) {
+                        failure = new IOException("Cannot prepare Companion data package", problem);
+                    }
+                }
+                MissionPackageManifest prepared = manifest;
+                IOException problem = failure;
+                mainHandler.post(() -> {
+                    if (diagnosticLogger != logger) return;
+                    updateLoggingButton();
+                    if (problem != null) {
+                        showLogError(problem);
+                        return;
+                    }
+                    try {
+                        if (!MissionPackageApi.Send(MapView.getMapView().getContext(),
+                                prepared, ToastSaveCallback.class, null))
+                            showLogError(new IOException("Cannot start ATAK data package send"));
+                    } catch (RuntimeException sendError) {
+                        showLogError(sendError);
+                    }
+                });
+            });
+        } else {
+            loggingButton.setText(R.string.starting_log);
+            logger.start(this::diagnosticMetadata, (file, error) -> mainHandler.post(() -> {
+                if (diagnosticLogger != logger) return;
+                updateLoggingButton();
+                if (error != null) showLogError(error);
+                else {
+                    LogX.i(TAG, "Companion diagnostic capture started");
+                    Toast.makeText(MapView.getMapView().getContext(),
+                            pluginContext.getString(R.string.log_started), Toast.LENGTH_LONG).show();
+                }
+            }));
+        }
+    }
+
+    private void updateLoggingButton() {
+        if (loggingButton == null) return;
+        boolean logging = diagnosticLogger != null && diagnosticLogger.isLogging();
+        loggingButton.setEnabled(diagnosticLogger != null && !diagnosticLogger.isBusy());
+        loggingButton.setText(logging ? R.string.stop_and_send_log : R.string.start_logging);
+        loggingButton.setContentDescription(pluginContext.getString(logging
+                ? R.string.send_log_description : R.string.start_log_description));
+    }
+
+    private void showLogError(Exception error) {
+        LogX.e(TAG, "Companion diagnostic log failed", error);
+        Toast.makeText(MapView.getMapView().getContext(),
+                pluginContext.getString(R.string.log_capture_problem, error.getMessage()),
+                Toast.LENGTH_LONG).show();
     }
 
     private void startGarmin(final long token) {
@@ -1542,7 +1655,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                 return link.send(GarminBloodhoundProtocol.outboundType(envelope),
                                         GarminBloodhoundProtocol.outboundPayload(envelope));
                             } catch (IllegalArgumentException e) {
-                                Log.w(TAG, "Garmin Bloodhound message rejected", e);
+                                LogX.w(TAG, "Garmin Bloodhound message rejected", e);
                                 return false;
                             }
                         }
@@ -1684,7 +1797,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
         Object value = payload.opt("transactionId");
         if (!GarminSettingsProtocol.isValidTransactionId(value)) {
-            Log.w(TAG, "Ignoring Garmin settings response with missing or invalid transaction ID.");
+            LogX.w(TAG, "Ignoring Garmin settings response with missing or invalid transaction ID.");
             return;
         }
         String transactionId = (String) value;
@@ -1802,11 +1915,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             handleManagementReleaseAck(envelope.optJSONObject("payload"), link);
             return;
         }
-        Log.i(TAG, "Garmin Connect IQ message: " + msgType);
+        LogX.i(TAG, "Garmin Connect IQ message: " + msgType);
         if ("bloodhound_control".equals(msgType)
                 || "bloodhound_control_result".equals(msgType)) {
             if (!isCurrentGarminBloodhoundLink(link)) {
-                Log.w(TAG, "Ignoring Garmin Bloodhound message from a non-exclusive watch link");
+                LogX.w(TAG, "Ignoring Garmin Bloodhound message from a non-exclusive watch link");
                 return;
             }
             BloodhoundBridge bridge = bloodhoundBridge;
@@ -1827,7 +1940,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
             int requestedLimit = requestPayload == null ? 50 : requestPayload.optInt("limit", 50);
             if (garminEntities == null || !garminEntities.sendSnapshot(link, requestedLimit)) {
-                Log.w(TAG, "Unable to send Garmin entity snapshot");
+                LogX.w(TAG, "Unable to send Garmin entity snapshot");
                 if (garminConnectionStatusTV != null) {
                     garminConnectionStatusTV.setText("Garmin connected, but entity sync could not be sent.");
                 }
@@ -1858,7 +1971,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     }
                     if (link != null && link.isCurrent()) link.send("relay_status", status);
                 } catch (IllegalArgumentException e) {
-                    Log.w(TAG, "Garmin capabilities not negotiated: " + e.getMessage());
+                    LogX.w(TAG, "Garmin capabilities not negotiated: " + e.getMessage());
                 }
             }
         }
@@ -1935,11 +2048,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     client.isBondedConnected(),
                     bleCotBridge != null && bleCotBridge.isWatchOriginEmergency(uid),
                     json -> client.writeJsonLineToWatch(json, session))) {
-                Log.w(TAG, "Phone emergency CoT could not be queued for BLE type="
+                LogX.w(TAG, "Phone emergency CoT could not be queued for BLE type="
                         + event.getType() + " uid=" + uid);
             }
         } catch (org.json.JSONException e) {
-            Log.e(TAG, "Failed to serialize phone emergency CoT for BLE", e);
+            LogX.e(TAG, "Failed to serialize phone emergency CoT for BLE", e);
         }
     }
 
@@ -1952,6 +2065,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (templatePane == null) {
             // IMPORTANT: store paneView as a FIELD (not a local)
             paneView = PluginLayoutInflater.inflate(pluginContext, R.layout.main_layout, null);
+            loggingButton = paneView.findViewById(R.id.loggingButton);
+            loggingButton.setOnClickListener(v -> onLoggingClicked());
+            updateLoggingButton();
 
             templatePane = new PaneBuilder(paneView)
                     .setMetaValue(Pane.RELATIVE_LOCATION, Pane.Location.Default)
@@ -2374,7 +2490,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (settingsStatusTV != null) settingsStatusTV.setText("Requesting settings from Garmin watch...");
             updateSettingsSendState();
             scheduleGarminSettingsTimeout(transactionId, link, attempt);
-            Log.i(TAG, "Garmin request_settings (" + reason + ") sent with transaction " + transactionId);
+            LogX.i(TAG, "Garmin request_settings (" + reason + ") sent with transaction " + transactionId);
             return;
         }
         if (bleClient == null || !bleClient.isConnected()) return;
@@ -2387,7 +2503,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         String req = "{\"msg_type\":\"request_settings\"}";
         boolean ok = bleClient.writeJsonLineToWatch(req);
 
-        Log.i(TAG, "request_settings (" + reason + ") ok=" + ok);
+        LogX.i(TAG, "request_settings (" + reason + ") ok=" + ok);
 
         if (settingsStatusTV != null && settingsScreenRoot != null
                 && settingsScreenRoot.getVisibility() == View.VISIBLE) {
@@ -2501,7 +2617,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (settingsStatusTV != null) settingsStatusTV.setText(error.getMessage());
             return false;
         } catch (JSONException error) {
-            Log.e(TAG, "Failed to build settings JSON", error);
+            LogX.e(TAG, "Failed to build settings JSON", error);
             if (settingsStatusTV != null) settingsStatusTV.setText("Failed to build settings JSON.");
             return false;
         }
@@ -2931,7 +3047,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (takServerAdapter != null) takServerAdapter.notifyDataSetChanged();
             if (settingsStatusTV != null) settingsStatusTV.setText("Loaded " + file.getName() + " for the selected server.");
         } catch (Throwable t) {
-            Log.w(TAG, "Failed to load p12 file", t);
+            LogX.w(TAG, "Failed to load p12 file", t);
             if (settingsStatusTV != null) settingsStatusTV.setText("Failed to read the selected P12 file.");
         }
     }
@@ -3027,7 +3143,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (!settingsSession.acceptSnapshot(settingsToken, complete)) return;
         lastSettingsPayload = WatchSettingsSnapshot.observe(lastSettingsPayload, payload, complete);
         JSONArray servers = payload.optJSONArray("takServerList");
-        Log.i(TAG, "applySettingsPayloadDiscretely reason=" + reason
+        LogX.i(TAG, "applySettingsPayloadDiscretely reason=" + reason
                 + " serverCount=" + (servers == null ? 0 : servers.length()));
         mainHandler.post(() -> {
             if (!settingsSession.isCurrent(settingsToken)) return;

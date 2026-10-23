@@ -133,7 +133,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             }
             return normalize(event, item);
         } catch (RuntimeException e) {
-            android.util.Log.w("WTK/GarminEntity", "Unable to normalize map entity", e);
+            LogX.w("WTK/GarminEntity", "Unable to normalize map entity", e);
             return null;
         }
     }
@@ -146,7 +146,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             Map<String, Object> entity = normalize(event, null);
             if (entity != null) target.accept(entity);
         } catch (RuntimeException e) {
-            android.util.Log.w("WTK/GarminEntity", "Unable to normalize emergency", e);
+            LogX.w("WTK/GarminEntity", "Unable to normalize emergency", e);
         }
     }
 
@@ -230,7 +230,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     }
 
     @Override public void warning(String message) {
-        android.util.Log.w("WTK/GarminEntity", message);
+        LogX.w("WTK/GarminEntity", message);
     }
 
     private static Map<String, Object> detail(CotDetail detail, String... attributes) {

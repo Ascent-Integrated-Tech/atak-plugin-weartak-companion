@@ -2,7 +2,6 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.atakmap.android.maps.MapEvent;
@@ -146,7 +145,7 @@ final class PhoneUserMapRelay {
             try {
                 queue(item.getUID(), snapshot((Marker) item));
             } catch (RuntimeException e) {
-                Log.e(TAG, "Could not export live ATAK user", e);
+                LogX.e(TAG, "Could not export live ATAK user", e);
             }
         });
     }
@@ -172,7 +171,7 @@ final class PhoneUserMapRelay {
         long updated = marker.getMetaLong("lastUpdateTime", 0);
         long duration = marker.getMetaLong("autoStaleDuration", 0);
         if (updated <= 0 || duration <= 0 || updated > Long.MAX_VALUE - duration) {
-            Log.w(TAG, "User not relayed: no valid source lifetime uid=" + marker.getUID());
+            LogX.w(TAG, "User not relayed: no valid source lifetime uid=" + marker.getUID());
             return null;
         }
         event.setTime(new CoordinatedTime(updated));
@@ -216,9 +215,9 @@ final class PhoneUserMapRelay {
         } catch (IllegalStateException e) {
             if (!pending.isEmpty()) pending.remove(pending.keySet().iterator().next());
             reportCapacity();
-            Log.e(TAG, "Live user relay capacity exceeded", e);
+            LogX.e(TAG, "Live user relay capacity exceeded", e);
         } catch (JSONException e) {
-            Log.e(TAG, "Could not encode live user relay envelope", e);
+            LogX.e(TAG, "Could not encode live user relay envelope", e);
         } finally {
             if (map != null) handler.postDelayed(pump, 100);
         }
@@ -227,7 +226,7 @@ final class PhoneUserMapRelay {
     private void reportCapacity() {
         if (capacityReported) return;
         capacityReported = true;
-        Log.e(TAG, "Live user relay limited to 512 contacts; additional contacts were not sent");
+        LogX.e(TAG, "Live user relay limited to 512 contacts; additional contacts were not sent");
         Toast.makeText(map.getContext(), "Watch user relay full (512 contacts). Some users were not sent.",
                 Toast.LENGTH_LONG).show();
     }

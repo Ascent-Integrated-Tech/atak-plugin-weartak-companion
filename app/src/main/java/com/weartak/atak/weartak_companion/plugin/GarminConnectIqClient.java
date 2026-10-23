@@ -1,7 +1,6 @@
 package com.weartak.atak.weartak_companion.plugin;
 
 import android.content.Context;
-import android.util.Log;
 
 import com.atakmap.android.maps.MapView;
 
@@ -119,7 +118,7 @@ public final class GarminConnectIqClient {
         try {
             connectIQ.initialize(appContext, false, createSdkListener(session));
         } catch (RuntimeException e) {
-            Log.e(TAG, "Connect IQ initialization failed", e);
+            LogX.e(TAG, "Connect IQ initialization failed", e);
             synchronized (lock) {
                 initializing = false;
             }
@@ -186,13 +185,13 @@ public final class GarminConnectIqClient {
         try {
             connectIQ.unregisterAllForEvents();
         } catch (InvalidStateException e) {
-            Log.w(TAG, "Unable to unregister Connect IQ event listeners", e);
+            LogX.w(TAG, "Unable to unregister Connect IQ event listeners", e);
         }
 
         try {
             connectIQ.shutdown(appContext);
         } catch (InvalidStateException e) {
-            Log.w(TAG, "Unable to shut down Connect IQ SDK", e);
+            LogX.w(TAG, "Unable to shut down Connect IQ SDK", e);
         }
     }
 
@@ -212,7 +211,7 @@ public final class GarminConnectIqClient {
         try {
             knownDevices = connectIQ.getKnownDevices();
         } catch (InvalidStateException | ServiceUnavailableException e) {
-            Log.e(TAG, "Unable to list paired Garmin devices", e);
+            LogX.e(TAG, "Unable to list paired Garmin devices", e);
             publishStatus("Could not read Garmin devices: " + e.getMessage());
             return;
         }
@@ -237,7 +236,7 @@ public final class GarminConnectIqClient {
             try {
                 connectIQ.unregisterForEvents(entry.device);
             } catch (InvalidStateException e) {
-                Log.w(TAG, "Unable to unregister removed Garmin device", e);
+                LogX.w(TAG, "Unable to unregister removed Garmin device", e);
             }
         }
 
@@ -282,7 +281,7 @@ public final class GarminConnectIqClient {
         }
 
         if (targets.isEmpty()) {
-            Log.w(TAG, "No connected Garmin watch with WearTAK available for " + msgType);
+            LogX.w(TAG, "No connected Garmin watch with WearTAK available for " + msgType);
             return false;
         }
 
@@ -291,7 +290,7 @@ public final class GarminConnectIqClient {
         envelope.put("payload", payload == null ? new HashMap<String, Object>() : payload);
         if ("route".equals(msgType)
                 && !GarminRouteProtocol.fitsEnvelope(msgType, payload)) {
-            Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + msgType);
+            LogX.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + msgType);
             return false;
         }
 
@@ -305,9 +304,9 @@ public final class GarminConnectIqClient {
                                 if (!isCurrentDevice(target) || !target.connected
                                         || target.linkGeneration != link) return;
                                 if (messageStatus == ConnectIQ.IQMessageStatus.SUCCESS) {
-                                    Log.i(TAG, "Sent " + msgType + " to " + device.getFriendlyName());
+                                    LogX.i(TAG, "Sent " + msgType + " to " + device.getFriendlyName());
                                 } else {
-                                    Log.w(TAG, "Message " + msgType + " to "
+                                    LogX.w(TAG, "Message " + msgType + " to "
                                             + device.getFriendlyName() + " failed: " + messageStatus);
                                     publishStatus("Garmin message failed: " + messageStatus);
                                 }
@@ -315,7 +314,7 @@ public final class GarminConnectIqClient {
                         });
                 accepted = true;
             } catch (InvalidStateException | ServiceUnavailableException | IllegalArgumentException e) {
-                Log.e(TAG, "Unable to send " + msgType + " to "
+                LogX.e(TAG, "Unable to send " + msgType + " to "
                         + target.device.getFriendlyName(), e);
                 publishStatus("Unable to send Garmin message: " + e.getMessage());
             }
@@ -362,7 +361,7 @@ public final class GarminConnectIqClient {
                                 envelope.put("payload", payload);
                                 if ("route".equals(type)
                                         && !GarminRouteProtocol.fitsEnvelope(type, payload)) {
-                                    Log.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + type);
+                                    LogX.w(TAG, "Garmin message exceeds the 6000-byte envelope limit: " + type);
                                     return false;
                                 }
                                 if (entry.entitySyncVersion >= 2 && ("entity".equals(type)
@@ -374,12 +373,12 @@ public final class GarminConnectIqClient {
                                     connectIQ.sendMessage(entry.device, entry.app, envelope,
                                             (device, app, status) -> {
                                                 if (isCurrent() && status != ConnectIQ.IQMessageStatus.SUCCESS)
-                                                    Log.w(TAG, "Garmin entity handoff failed: " + status);
+                                                    LogX.w(TAG, "Garmin entity handoff failed: " + status);
                                             });
                                     return true;
                                 } catch (InvalidStateException | ServiceUnavailableException
                                         | IllegalArgumentException e) {
-                                    Log.w(TAG, "Garmin entity handoff rejected", e);
+                                    LogX.w(TAG, "Garmin entity handoff rejected", e);
                                     return false;
                                 }
                             }
@@ -456,7 +455,7 @@ public final class GarminConnectIqClient {
                             try {
                                 connectIQ.unregisterForApplicationEvents(entry.device, entry.app);
                             } catch (InvalidStateException | ServiceUnavailableException e) {
-                                Log.w(TAG, "Unable to retire Garmin app subscription", e);
+                                LogX.w(TAG, "Unable to retire Garmin app subscription", e);
                             }
                         }
                         entry.appEventsRegistered = false;
@@ -476,7 +475,7 @@ public final class GarminConnectIqClient {
                 entry.connected = connectIQ.getDeviceStatus(device)
                         == IQDevice.IQDeviceStatus.CONNECTED;
             } catch (InvalidStateException | ServiceUnavailableException e) {
-                Log.w(TAG, "Unable to read Garmin device status", e);
+                LogX.w(TAG, "Unable to read Garmin device status", e);
             }
             publishConnectionState();
             loadApplication(entry);
@@ -484,7 +483,7 @@ public final class GarminConnectIqClient {
             synchronized (lock) {
                 devices.remove(device.getDeviceIdentifier());
             }
-            Log.e(TAG, "Unable to register Garmin device events", e);
+            LogX.e(TAG, "Unable to register Garmin device events", e);
             publishStatus("Could not monitor Garmin device: " + e.getMessage());
         }
     }
@@ -536,7 +535,7 @@ public final class GarminConnectIqClient {
             synchronized (lock) {
                 entry.appInfoPending = false;
             }
-            Log.e(TAG, "Unable to check for WearTAK on Garmin watch", e);
+            LogX.e(TAG, "Unable to check for WearTAK on Garmin watch", e);
             publishStatus("Could not check WearTAK on Garmin: " + e.getMessage());
         }
     }
@@ -555,7 +554,7 @@ public final class GarminConnectIqClient {
                         synchronized (GarminConnectIqClient.this) {
                             if (!isCurrentDevice(entry) || entry.linkGeneration != link) return;
                             if (messageStatus != ConnectIQ.IQMessageStatus.SUCCESS) {
-                                Log.w(TAG, "Garmin message receive failed: " + messageStatus);
+                                LogX.w(TAG, "Garmin message receive failed: " + messageStatus);
                                 publishStatus("Garmin receive error: " + messageStatus);
                                 return;
                             }
@@ -588,7 +587,7 @@ public final class GarminConnectIqClient {
             synchronized (lock) {
                 entry.appEventsRegistered = false;
             }
-            Log.e(TAG, "Unable to register Garmin app events", e);
+            LogX.e(TAG, "Unable to register Garmin app events", e);
             publishStatus("Could not listen for Garmin messages: " + e.getMessage());
         }
     }
@@ -600,7 +599,7 @@ public final class GarminConnectIqClient {
             try {
                 result.put((String) value.getKey(), toJsonValue(value.getValue()));
             } catch (JSONException e) {
-                Log.w(TAG, "Skipping unsupported Garmin message value", e);
+                LogX.w(TAG, "Skipping unsupported Garmin message value", e);
             }
         }
         return result;

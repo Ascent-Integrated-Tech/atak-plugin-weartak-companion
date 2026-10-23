@@ -67,6 +67,16 @@ features, leave it unchecked and record **N/A** with the reason in the results.
   exercise chat/map updates and reconnects over 30-60 minutes. No crashes,
   duplicate relays, stale settings, or false connection status. Record unusual
   heat or battery drain.
+- [ ] **Companion diagnostics (no adb):** on phone and tablet, press Log, then
+  scan/connect/disconnect and relay a supported point/chat. Press Send: Finishing...
+  changes back to Log and ATAK offers data-package recipients (not an Android
+  share sheet). Receive/open the package and verify plugin/ATAK/device/Android
+  versions, UTC export time, and BLE/dispatch events. Cancel recipient selection
+  and confirm a new capture still works. Restart ATAK during capture: the file
+  remains under `companion-logs`, but capture stays off until Log is pressed again.
+  Exercise repeated captures and the 2 MiB cap; only the latest three files remain,
+  a capped log warns the user and reports its limit/drop status. Do not send
+  operational logs to unapproved recipients.
 
 ## Conditional features
 

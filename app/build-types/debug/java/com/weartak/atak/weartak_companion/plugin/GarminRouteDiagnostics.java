@@ -1,6 +1,5 @@
 package com.weartak.atak.weartak_companion.plugin;
 
-import android.util.Log;
 
 import com.atakmap.android.importexport.CotEventFactory;
 import com.atakmap.android.maps.MapView;
@@ -60,9 +59,9 @@ final class GarminRouteDiagnostics {
             map.getRootGroup().addItem(route);
             route.setPoint(1, point(35.6, -117.7), false);
             check(link.sent == sent, "closed route source detaches native listeners");
-            Log.i(TAG, "PASS: native route acceptance complete; in-memory link, no physical Garmin");
+            LogX.i(TAG, "PASS: native route acceptance complete; in-memory link, no physical Garmin");
         } catch (RuntimeException e) {
-            Log.e(TAG, "FAIL: native route acceptance", e);
+            LogX.e(TAG, "FAIL: native route acceptance", e);
         } finally {
             forwarder.close();
             map.getRootGroup().removeItem(route);
@@ -83,7 +82,7 @@ final class GarminRouteDiagnostics {
 
     private static void check(boolean passed, String message) {
         if (!passed) throw new IllegalStateException(message);
-        Log.i(TAG, "PASS: " + message);
+        LogX.i(TAG, "PASS: " + message);
     }
 
     private static final class CapturingLink implements GarminEntityForwarder.Link {
@@ -96,7 +95,7 @@ final class GarminRouteDiagnostics {
         @Override public int routeVersion() { return GarminRouteProtocol.VERSION; }
         @Override public boolean send(String type, Map<String, Object> payload) {
             sent++;
-            if ("routes_error".equals(type)) Log.w(TAG, String.valueOf(payload.get("error")));
+            if ("routes_error".equals(type)) LogX.w(TAG, String.valueOf(payload.get("error")));
             if (uid.equals(payload.get("uid"))) {
                 if ("route".equals(type)) route = payload;
                 if ("route_remove".equals(type)) route = null;

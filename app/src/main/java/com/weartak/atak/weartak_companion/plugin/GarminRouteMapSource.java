@@ -137,7 +137,7 @@ final class GarminRouteMapSource implements GarminRouteForwarder.Source {
             return GarminRouteProtocol.fromCotXml(xml.toString(), metadata, item.getUID());
         }, message -> {
             if (rejected != null) rejected.accept(message);
-            android.util.Log.w("WTK/GarminRoute", "Omitting an invalid ATAK route");
+            LogX.w("WTK/GarminRoute", "Omitting an invalid ATAK route");
         });
     }
 

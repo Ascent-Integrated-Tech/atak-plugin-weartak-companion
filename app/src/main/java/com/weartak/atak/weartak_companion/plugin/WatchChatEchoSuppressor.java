@@ -2,7 +2,6 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.util.Log;
 
 import com.atakmap.android.chat.GeoChatService;
 import com.atakmap.comms.CommsMapComponent;
@@ -51,7 +50,7 @@ final class WatchChatEchoSuppressor implements GeoChatService.GeoChatDetailHandl
             tracker.clear();
             throw failure;
         }
-        Log.w(TAG, "Installed exact watch-chat echo filter; ATAK listener replacement is non-atomic");
+        LogX.w(TAG, "Installed exact watch-chat echo filter; ATAK listener replacement is non-atomic");
     }
 
     synchronized void stop() {
@@ -62,7 +61,7 @@ final class WatchChatEchoSuppressor implements GeoChatService.GeoChatDetailHandl
         } finally {
             tracker.clear();
         }
-        Log.i(TAG, "Restored ATAK GeoChatService listener");
+        LogX.i(TAG, "Restored ATAK GeoChatService listener");
     }
 
     boolean isActive() {
@@ -94,7 +93,7 @@ final class WatchChatEchoSuppressor implements GeoChatService.GeoChatDetailHandl
         CotDetail chat = event == null ? null : event.findDetail("__chat");
         CotDetail remarks = event == null ? null : event.findDetail("remarks");
         if (chat == null || remarks == null) {
-            Log.w(TAG, "Watch chat missing CoT identity details; echo will not be suppressed");
+            LogX.w(TAG, "Watch chat missing CoT identity details; echo will not be suppressed");
             return false;
         }
         try {
@@ -102,7 +101,7 @@ final class WatchChatEchoSuppressor implements GeoChatService.GeoChatDetailHandl
                     chat.getAttribute("id"), chat.getAttribute("messageId"),
                     remarks.getInnerText(), SystemClock.elapsedRealtime());
         } catch (IllegalArgumentException e) {
-            Log.w(TAG, "Watch chat identity incomplete; echo will not be suppressed", e);
+            LogX.w(TAG, "Watch chat identity incomplete; echo will not be suppressed", e);
         }
         return false;
     }
@@ -118,7 +117,7 @@ final class WatchChatEchoSuppressor implements GeoChatService.GeoChatDetailHandl
                 && tracker.isEcho(event.getType(), event.getUID(), remarks.getAttribute("source"),
                 chat.getAttribute("id"), chat.getAttribute("messageId"), remarks.getInnerText(),
                 SystemClock.elapsedRealtime())) {
-            Log.i(TAG, "Suppressed exact watch chat echo before ATAK incoming processing");
+            LogX.i(TAG, "Suppressed exact watch chat echo before ATAK incoming processing");
             return;
         }
         host.forwardToGeoChatService(event, extras);

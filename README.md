@@ -17,6 +17,34 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+### Companion diagnostic logging (WEARTAK-274)
+
+Use **Log** in the Companion header before reproducing a problem, then **Send**
+to stop capture and open ATAK's data-package recipient workflow. The button shows
+**Finishing...** while queued writes finish. This follows the Physiology
+Dashboard's Log/Send workflow; it does not use Android's share sheet or adb.
+Only Companion `WTK/*` logging calls are captured, including BLE scan,
+connection/disconnection and CoT dispatch events. No system logcat is read.
+
+Each UTF-8 text file includes the plugin version, installed ATAK version, device
+model, Android version, capture UTC timestamps and the Send/export UTC timestamp.
+Logs can contain operational callsigns, Bluetooth addresses, positions and message
+content: review recipients before sending. Files are stored in ATAK's
+`companion-logs` directory with UTC-stamped names, like Dashboard's `physio-logs`;
+this is ATAK storage, not plugin-private storage. Capture is opt-in and does not
+automatically resume after ATAK restarts. Previously captured files survive a
+restart; an interrupted/not-sent file says `Export UTC: not sent`.
+
+The plugin retains at most three capture files, each at most 2 MiB (6 MiB total).
+Starting another capture removes the oldest excess capture files, never unrelated
+files or ATAK-managed data packages. At the size limit, additional capture stops,
+a notification asks the user to press **Send**, and the partial log has an explicit
+size-limit footer. A bounded 256-record queue drops excess diagnostics instead of
+delaying BLE/UI work; the footer reports the drop count. File creation, writes,
+cleanup, finalization and data-package manifest preparation run on a single writer
+worker. ATAK owns package delivery and its independently managed package storage;
+opening the recipient workflow is not proof of delivery.
+
 ### Bonded Location Diagnostics (WEARTAK-165)
 
 Traditional BLE handles WearTAK's opt-in location diagnostics as version 1, session-fenced JSON messages distinct from CoT, gateway forwarding, and phone/watch location authority. The phone accepts negotiation only for a ready bonded single-watch Companion session; setup, gateway, Garmin, and Samsung routes do not start observers. The watch's session-scoped stop message immediately unregisters phone callbacks when diagnostics are disabled; a watch or phone disconnect also stops the callbacks. Unsupported versions/peers are ignored without periodic renegotiation.

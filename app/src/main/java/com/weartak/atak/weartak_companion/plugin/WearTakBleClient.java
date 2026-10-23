@@ -24,7 +24,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
-import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
@@ -613,6 +612,7 @@ public class WearTakBleClient {
 
         try {
             scanner.startScan(null, settings.build(), activeScanCallback);
+            logI("SCAN: started");
         } catch (SecurityException e) {
             scanning = false;
             activeScanCallback = null;
@@ -693,7 +693,7 @@ public class WearTakBleClient {
                     String callsign = parseAdvertisedCallsign(serviceData);
                     advertisedCallsigns.put(addr, callsign);
                     if (callsign == null)
-                        Log.d(TAG, "SCAN: A11A callsign unavailable or invalid for " + addr);
+                        LogX.d(TAG, "SCAN: A11A callsign unavailable or invalid for " + addr);
                 }
 
                 boolean bonded = isBonded(d);
@@ -705,7 +705,7 @@ public class WearTakBleClient {
                 scanLastSeen.put(addr, android.os.SystemClock.elapsedRealtime());
 
                 if (listener != null) listener.onDeviceFound(dd);
-                Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
+                LogX.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
                         + " displayName=" + dd.primaryName() + " hasService=" + hasService + " rssi=" + rssi);
             }
 
@@ -910,6 +910,7 @@ public class WearTakBleClient {
 
     private synchronized void connectToSelectedDeviceInternal(DiscoveredDevice device, boolean allowBondCreation) {
         if (device == null || device.address == null) return;
+        logI("CONNECT: requested address=" + device.address);
         if (!started) start();
 
         closeGattInternal("new connection attempt");
@@ -1496,6 +1497,7 @@ public class WearTakBleClient {
         }
 
         private void handleConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            logI("GATT connection state=" + newState + " status=" + status);
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 if (retryUnestablishedConnect(gatt, status)) return;
                 failSecureSession("GATT connection failed: " + status, "gatt_status_" + status);
@@ -1987,6 +1989,6 @@ public class WearTakBleClient {
         return trimmed.trim().isEmpty() ? null : trimmed.trim();
     }
 
-    private void logI(String msg) { android.util.Log.i(TAG, msg); }
-    private void logW(String msg) { android.util.Log.w(TAG, msg); }
+    private void logI(String msg) { LogX.i(TAG, msg); }
+    private void logW(String msg) { LogX.w(TAG, msg); }
 }

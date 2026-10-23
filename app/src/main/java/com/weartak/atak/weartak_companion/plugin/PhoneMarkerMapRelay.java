@@ -2,7 +2,6 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.atakmap.android.importexport.CotEventFactory;
@@ -80,7 +79,7 @@ final class PhoneMarkerMapRelay {
                 boolean sent = policy.forwardDeletion(snapshot(item), session,
                             (json, writeSession) -> {
                                 boolean written = client.writeJsonLineToWatch(json, writeSession);
-                                if (!written) Log.w(TAG, "Point deletion write rejected");
+                                if (!written) LogX.w(TAG, "Point deletion write rejected");
                                 return written;
                             });
                 if (sent && token != null) {
@@ -91,7 +90,7 @@ final class PhoneMarkerMapRelay {
                     }, ACK_TIMEOUT_MS);
                 }
             } catch (JSONException | RuntimeException e) {
-                Log.e(TAG, "Point deletion export failed", e);
+                LogX.e(TAG, "Point deletion export failed", e);
             }
             detach((Marker) item);
             policy.removed(item.getUID());
@@ -103,7 +102,7 @@ final class PhoneMarkerMapRelay {
             try {
                 policy.watchImported(snapshot(item));
             } catch (RuntimeException e) {
-                Log.e(TAG, "Cannot snapshot imported watch marker", e);
+                LogX.e(TAG, "Cannot snapshot imported watch marker", e);
             }
         }
         changed(item);
@@ -119,20 +118,20 @@ final class PhoneMarkerMapRelay {
             if (!(target instanceof String) || !(revision instanceof String)
                     || ((String) target).trim().isEmpty() || ((String) target).length() > 256
                     || !PhoneMarkerRelay.validToken((String) revision)) {
-                Log.w(TAG, "Ignoring invalid point deletion");
+                LogX.w(TAG, "Ignoring invalid point deletion");
                 return false;
             }
             uid = (String) target;
             token = (String) revision;
         } catch (JSONException e) {
-            Log.w(TAG, "Ignoring invalid point deletion JSON", e);
+            LogX.w(TAG, "Ignoring invalid point deletion JSON", e);
             return false;
         }
         final long session = client.getReadySession();
         handler.post(() -> {
             synchronized (PhoneMarkerMapRelay.this) {
                 if (mapView == null || session < 0 || session != client.getReadySession()) {
-                    Log.w(TAG, "Ignoring point deletion from ended/unready connection");
+                    LogX.w(TAG, "Ignoring point deletion from ended/unready connection");
                     return;
                 }
                 MapItem item = mapView.getRootGroup().deepFindUID(uid);
@@ -140,21 +139,21 @@ final class PhoneMarkerMapRelay {
                 try {
                     if (!(item instanceof Marker) || !markers.containsKey(item)
                             || !policy.acceptsDeletion(snapshot(item), token, session)) {
-                        Log.d(TAG, "Point deletion ignored: unknown or changed revision");
+                        LogX.d(TAG, "Point deletion ignored: unknown or changed revision");
                     } else {
                         removed = policy.applyLocalDeletion(snapshot(item), token, session,
                                 item::removeFromGroup);
-                        Log.d(TAG, "Point deletion applied=" + removed);
+                        LogX.d(TAG, "Point deletion applied=" + removed);
                     }
                 } catch (RuntimeException e) {
-                    Log.e(TAG, "Point deletion application failed", e);
+                    LogX.e(TAG, "Point deletion application failed", e);
                 }
                 try {
                     if (!client.writeJsonLineToWatch(PhoneMarkerRelay.deletionAck(uid, token, removed), session)) {
-                        Log.w(TAG, "Point deletion ack write rejected");
+                        LogX.w(TAG, "Point deletion ack write rejected");
                     }
                 } catch (JSONException e) {
-                    Log.e(TAG, "Point deletion ack failed", e);
+                    LogX.e(TAG, "Point deletion ack failed", e);
                 }
             }
         });
@@ -170,18 +169,18 @@ final class PhoneMarkerMapRelay {
             Object outcome = payload == null ? null : payload.opt("result");
             if (!(target instanceof String) || !(revision instanceof String) || !(outcome instanceof String)
                     || !PhoneMarkerRelay.validToken((String) revision)) {
-                Log.w(TAG, "Ignoring invalid point deletion ack");
+                LogX.w(TAG, "Ignoring invalid point deletion ack");
                 return false;
             }
             uid = (String) target;
             token = (String) revision;
             result = (String) outcome;
         } catch (JSONException e) {
-            Log.w(TAG, "Ignoring invalid point deletion ack JSON", e);
+            LogX.w(TAG, "Ignoring invalid point deletion ack JSON", e);
             return false;
         }
         if (!policy.resolveDeletionAck(uid, token, client.getReadySession())) {
-            Log.w(TAG, "Ignoring unknown point deletion ack");
+            LogX.w(TAG, "Ignoring unknown point deletion ack");
             return false;
         }
         reportDeletion(uid, PhoneMarkerRelay.ACK_APPLIED.equals(result) ? "applied" : "rejected");
@@ -189,7 +188,7 @@ final class PhoneMarkerMapRelay {
     }
 
     private void reportDeletion(String uid, String outcome) {
-        Log.i(TAG, "Watch point deletion uid=" + uid + " outcome=" + outcome);
+        LogX.i(TAG, "Watch point deletion uid=" + uid + " outcome=" + outcome);
         handler.post(() -> {
             MapView view = mapView;
             if (view != null) {
@@ -234,11 +233,11 @@ final class PhoneMarkerMapRelay {
             policy.forward(snapshot(marker), expectedSession, client.getReadySession(),
                     System.currentTimeMillis(), (json, session) -> {
                         boolean queued = client.writeJsonLineToWatch(json, session);
-                        if (!queued) Log.w(TAG, "Phone marker write rejected uid=" + marker.getUID());
+                        if (!queued) LogX.w(TAG, "Phone marker write rejected uid=" + marker.getUID());
                         return queued;
                     });
         } catch (Exception e) {
-            Log.e(TAG, "Phone marker export/write failed uid=" + marker.getUID(), e);
+            LogX.e(TAG, "Phone marker export/write failed uid=" + marker.getUID(), e);
         }
     }
 

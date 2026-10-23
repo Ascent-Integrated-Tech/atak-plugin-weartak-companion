@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -125,7 +124,7 @@ final class MultiwatchGateway {
             if (GatewayCot.chatAllowsRecipient(chat, peer.uid)) {
                 if (!peer.fanout.offer(chat.uid, chat.xml)) {
                     peer.error = "Chat output queue full (128); message not queued";
-                    Log.w(TAG, peer.device.address + ": " + peer.error);
+                    LogX.w(TAG, peer.device.address + ": " + peer.error);
                 }
             }
         }
@@ -217,7 +216,7 @@ final class MultiwatchGateway {
                     if (!valid() || peer.negotiated || !handshake.equals(peer.protocolSession)) return;
                     pause(peer);
                     peer.error = "Unsupported watch: Gateway v1 handshake timed out (10s). Update WearTAK.";
-                    Log.w(TAG, peer.error);
+                    LogX.w(TAG, peer.error);
                     render();
                 };
                 main.postDelayed(peer.negotiationTimeout, 10000);
@@ -228,7 +227,7 @@ final class MultiwatchGateway {
                         peer.error = "Gateway handshake could not be queued";
                 } catch (org.json.JSONException e) {
                     peer.error = "Gateway handshake failed: " + e.getMessage();
-                    Log.e(TAG, peer.error, e);
+                    LogX.e(TAG, peer.error, e);
                 }
                 render();
             }); }
@@ -299,7 +298,7 @@ final class MultiwatchGateway {
                         }
                     } catch (Exception e) {
                         String message = "Gateway protocol error: " + e.getMessage();
-                        Log.e(TAG, peer.device.address + " watch forward failed", e);
+                        LogX.e(TAG, peer.device.address + " watch forward failed", e);
                         pause(peer);
                         peer.error = message;
                     }
@@ -310,14 +309,14 @@ final class MultiwatchGateway {
             @Override public void onError(String message) { onMain(() -> {
                 if (!valid()) return;
                 peer.error = "BLE error: " + message;
-                Log.w(TAG, peer.device.address + ": " + message);
+                LogX.w(TAG, peer.device.address + ": " + message);
                 render();
             }); }
             @Override public void onTrustLost(String address, String reason) { onMain(() -> {
                 if (!valid()) return;
                 pause(peer);
                 peer.error = "Trust lost: " + reason + ". Connect again to pair.";
-                Log.w(TAG, peer.device.address + ": " + peer.error);
+                LogX.w(TAG, peer.device.address + ": " + peer.error);
                 render();
             }); }
         });
@@ -415,13 +414,13 @@ final class MultiwatchGateway {
         render();
     }
 
-    private void error(String message) { status = message; Log.w(TAG, message); render(); }
+    private void error(String message) { status = message; LogX.w(TAG, message); render(); }
     private void fanout(String uid, String xml, Peer source) {
         for (Peer peer : peers.values()) {
             if (peer == source || !peer.negotiated || uid.equals(peer.uid)) continue;
             if (!peer.fanout.offer(uid, xml)) {
                 peer.error = "Map output queue full (128); latest new entity not queued";
-                Log.w(TAG, peer.device.address + ": " + peer.error);
+                LogX.w(TAG, peer.device.address + ": " + peer.error);
             }
         }
         render();
@@ -437,7 +436,7 @@ final class MultiwatchGateway {
             return true;
         } catch (org.json.JSONException e) {
             peer.error = "Map envelope failed: " + e.getMessage();
-            Log.e(TAG, peer.error, e);
+            LogX.e(TAG, peer.error, e);
             return false;
         }
     }
