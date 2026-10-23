@@ -312,7 +312,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         // Defensive: if you haven't updated item_ble_device.xml yet,
         // disconnectButton may not exist. Fail softly.
-        if (name != null && bondedName != null) BleDeviceAdapter.bindNames(name, bondedName, d);
+        if (name != null && bondedName != null) BleDeviceAdapter.bindNames(name, bondedName,
+                bleClient != null && bleClient.isConnected() ? bleClient.withSessionIdentity(d) : d);
         if (mac != null) mac.setText(d.address != null ? d.address : "—");
         if (rssi != null) rssi.setText(""); // avoid stale RSSI; can show last known if you want
         if (state != null) state.setText(managementRelease.isPending()
@@ -729,6 +730,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
                     String diagnosticType = pointEnvelope.optString("msgType",
                             pointEnvelope.optString("msg_type", ""));
+                    if (selectedDevice != null && ("watch_info".equals(diagnosticType)
+                            || "settings_request".equals(diagnosticType)
+                            || "settings_changed".equals(diagnosticType))) {
+                        bindConnectedCard(connectedCardView, selectedDevice);
+                    }
                     if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
                             LocationDiagnosticsProtocol.STOP.equals(diagnosticType) ||
                             LocationDiagnosticsProtocol.SNAPSHOT.equals(diagnosticType)) {
@@ -2936,6 +2942,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void updateConnectedCardTitleFromCallsign(String callsign) {
         if (connectedCardView == null) return;
         if (callsign == null || callsign.trim().isEmpty()) return;
+        if (bleClient != null && bleClient.isConnected() && selectedDevice != null) {
+            bindConnectedCard(connectedCardView, selectedDevice);
+            return;
+        }
 
         TextView name = connectedCardView.findViewById(R.id.deviceName);
         if (name != null) name.setText(callsign);
