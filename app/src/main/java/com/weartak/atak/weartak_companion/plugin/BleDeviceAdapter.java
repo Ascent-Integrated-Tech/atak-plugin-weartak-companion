@@ -143,7 +143,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     static String identityLines(Resources resources, WearTakBleClient.DiscoveredDevice device,
                                 String localCallsign, String status) {
         String unknown = resources.getString(R.string.watch_identity_unavailable);
-        String watch = nonBlank(device.callsign);
+        String watch = nonBlank(device.standaloneCallsign);
         if (watch == null) watch = nonBlank(device.advertisedCallsign);
         return resources.getString(R.string.watch_identity_lines,
                 available(localCallsign, unknown), available(status, unknown),

@@ -733,6 +733,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             || "settings_request".equals(diagnosticType)
                             || "settings_changed".equals(diagnosticType))) {
                         bindConnectedCard(connectedCardView, selectedDevice);
+                        refreshDeviceListUi();
                     }
                     if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
                             LocationDiagnosticsProtocol.STOP.equals(diagnosticType) ||
@@ -2244,7 +2245,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void refreshDeviceListUi() {
         if (deviceAdapter == null) return;
         deviceAdapter.setPanelStatus(panelStatusText());
-        deviceAdapter.setDevices(ScanDeviceList.visibleRows(scannedDevices, currentConnectedAddress,
+        List<WearTakBleClient.DiscoveredDevice> identities = new ArrayList<>();
+        for (WearTakBleClient.DiscoveredDevice device : scannedDevices)
+            identities.add(bleClient == null ? device : bleClient.withSessionIdentity(device));
+        deviceAdapter.setDevices(ScanDeviceList.visibleRows(identities, currentConnectedAddress,
                 bleClient != null && bleClient.isConnected(), this::loadPreferredAddress));
     }
 

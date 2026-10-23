@@ -160,14 +160,14 @@ public class BlePickerIdentityTest {
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("Galaxy Watch Ultra2 (RK2Z)", ALIAS, ALIAS, true, null)));
         verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
-                "ODIN-WEARTAK", ALIAS));
+                "Unavailable", ALIAS));
         verify(details).setText("");
         verify(details).setVisibility(View.GONE);
         clearInvocations(name, details);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("ODIN-WEARTAK", "ODIN-WEARTAK", "odin-weartak", true, null)));
         verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
-                "ODIN-WEARTAK", "ODIN-WEARTAK"));
+                "Unavailable", "ODIN-WEARTAK"));
         verify(details).setText("");
         verify(details).setVisibility(View.GONE);
         assertNull(client.withSessionIdentity(scan(null, ALIAS, ALIAS, false, null)).distinctBondedName());
@@ -362,18 +362,18 @@ public class BlePickerIdentityTest {
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                     scan(null, "Galaxy Watch Ultra 2 (RK2Z)", "WRONG-ALIAS", true, null)), "CONNECTED");
             verify(name).setText(expectedIdentity("ODIN-ATAK-S9FE", "CONNECTED", ADDRESS, "-56 dBm",
-                    "WEAROS-6558", "Galaxy Watch Ultra 2 (RK2Z)"));
+                    "Unavailable", "Galaxy Watch Ultra 2 (RK2Z)"));
             com.atakmap.android.maps.MapView.setTestCallsign("NEW-EUD");
             clearInvocations(name);
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                     scan(null, null, null, true, null)), "CONNECTED - SYNCING");
             verify(name).setText(expectedIdentity("NEW-EUD", "CONNECTED - SYNCING", ADDRESS, "-56 dBm",
-                    "WEAROS-6558", "Unavailable"));
+                    "Unavailable", "Unavailable"));
             clearInvocations(name);
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                     scan(null, null, "WRONG-ALIAS", false, null)), "NOT CONNECTED");
             verify(name).setText(expectedIdentity("NEW-EUD", "NOT CONNECTED", ADDRESS, "-56 dBm",
-                    "WEAROS-6558", "Unavailable"));
+                    "Unavailable", "Unavailable"));
             verify(details, times(3)).setVisibility(View.GONE);
         } finally {
             com.atakmap.android.maps.MapView.setTestContext(null);
@@ -410,6 +410,103 @@ public class BlePickerIdentityTest {
                 "Unavailable", "Unavailable"),
                 BleDeviceAdapter.identityLines(resources,
                         new WearTakBleClient.DiscoveredDevice(null, null, 0), null, "Disconnected"));
+    }
+
+    @Test public void standaloneScanCallsignSurvivesManagedSessionIdentityAndDisconnect() throws Exception {
+        WearTakBleClient client = scanningClient();
+        List<WearTakBleClient.DiscoveredDevice> found = new ArrayList<>();
+        startScan(client, collecting(found));
+        ((ScanCallback) get(client, "activeScanCallback")).onScanResult(
+                0, result(null, payload("WEAROS-6558"), false));
+        WearTakBleClient.DiscoveredDevice selected = found.get(0);
+        BluetoothDevice peer = mock(BluetoothDevice.class);
+        when(peer.getAddress()).thenReturn(ADDRESS);
+        BluetoothGatt gatt = mock(BluetoothGatt.class);
+        when(gatt.getDevice()).thenReturn(peer);
+        set(client, "bluetoothGatt", gatt);
+        set(client, "connected", true);
+        set(client, "servicesReady", true);
+        set(client, "sessionGeneration", 7L);
+        Resources resources = identityResources();
+        String expected = expectedIdentity("ODIN-ATAK", "CONNECTED", ADDRESS, "-56 dBm",
+                "WEAROS-6558", ALIAS);
+        for (String message : new String[] {
+                "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"ODIN-ATAK-S9FE\"}}",
+                "{\"msgType\":\"settings_request\",\"payload\":{\"callsign\":\"ODIN-ATAK-S9FE\"}}",
+                "{\"msgType\":\"settings_changed\",\"payload\":{\"callsign\":\"ODIN-ATAK-S9FE\"}}"
+        }) {
+            receive(client, message, 7);
+            assertEquals(expected, BleDeviceAdapter.identityLines(resources,
+                    client.withSessionIdentity(selected), "ODIN-ATAK", "CONNECTED"));
+        }
+        set(client, "connected", false);
+        assertEquals(expectedIdentity("ODIN-ATAK", "NOT CONNECTED", ADDRESS, "-56 dBm",
+                "WEAROS-6558", ALIAS), BleDeviceAdapter.identityLines(resources,
+                client.withSessionIdentity(selected), "ODIN-ATAK", "NOT CONNECTED"));
+        set(client, "sessionGeneration", 8L);
+        assertEquals("WEAROS-6558", client.withSessionIdentity(selected).advertisedCallsign);
+    }
+
+    @Test public void explicitStandaloneIdentityWinsAndRemainsAddressBoundAfterDisconnect() throws Exception {
+        WearTakBleClient client = readyClient();
+        WearTakBleClient.DiscoveredDevice selected = scan(null, "Galaxy Watch", ALIAS, true, null);
+        Resources resources = identityResources();
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":"
+                + "{\"cs\":\"ODIN-ATAK\",\"standaloneCallsign\":\"ODIN-WEARTAK\"}}", 7);
+        assertEquals(expectedIdentity("ODIN-ATAK", "CONNECTED", ADDRESS, "-56 dBm",
+                "ODIN-WEARTAK", "Galaxy Watch"), BleDeviceAdapter.identityLines(
+                resources, client.withSessionIdentity(selected), "ODIN-ATAK", "CONNECTED"));
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"callsign\":\"MANAGED\"}}", 7);
+        assertEquals("ODIN-WEARTAK", client.withSessionIdentity(selected).standaloneCallsign);
+        for (String invalid : new String[] {"null", "42", "true", "{}", "[]"}) {
+            receive(client, "{\"msgType\":\"settings_changed\",\"payload\":"
+                    + "{\"standaloneCallsign\":" + invalid + "}}", 7);
+            assertEquals("ODIN-WEARTAK", client.withSessionIdentity(selected).standaloneCallsign);
+        }
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":"
+                + "{\"standaloneCallsign\":\"UPDATED\"}}", 7);
+        assertEquals("UPDATED", client.withSessionIdentity(selected).standaloneCallsign);
+        receive(client, "{\"msgType\":\"settings_request\",\"payload\":"
+                + "{\"standaloneCallsign\":\" RESTORED \"}}", 7);
+        WearTakBleClient.DiscoveredDevice observed = client.withSessionIdentity(selected);
+        assertEquals("RESTORED", observed.standaloneCallsign);
+        WearTakBleClient.DiscoveredDevice other = new WearTakBleClient.DiscoveredDevice(
+                "Other", "00:00:00:00:00:02", 0);
+        assertNull(client.withSessionIdentity(other).standaloneCallsign);
+        set(client, "connected", false);
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":"
+                + "{\"standaloneCallsign\":\"NOT-READY\"}}", 7);
+        assertEquals("RESTORED", client.withSessionIdentity(selected).standaloneCallsign);
+        set(client, "connected", true);
+        set(client, "sessionGeneration", 8L);
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":"
+                + "{\"standaloneCallsign\":\"STALE\"}}", 7);
+        assertEquals("RESTORED", client.withSessionIdentity(observed).standaloneCallsign);
+        client.resetSession("standalone identity retained");
+        assertEquals("RESTORED", client.withSessionIdentity(selected).standaloneCallsign);
+    }
+
+    @Test public void blankStandaloneFallsBackToAdvertisementNeverEffectiveSessionName() throws Exception {
+        WearTakBleClient client = readyClient();
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, String> advertisements =
+                (java.util.Map<String, String>) get(client, "advertisedCallsigns");
+        advertisements.put(ADDRESS, "SCAN-WATCH");
+        Resources resources = identityResources();
+        WearTakBleClient.DiscoveredDevice selected = scan(null, "Galaxy Watch", ALIAS, true, null);
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":"
+                + "{\"cs\":\"MANAGED\",\"standaloneCallsign\":\"FULL-STANDALONE\"}}", 7);
+        assertEquals(expectedIdentity("EUD", "CONNECTED", ADDRESS, "-56 dBm",
+                "FULL-STANDALONE", "Galaxy Watch"), BleDeviceAdapter.identityLines(
+                resources, client.withSessionIdentity(selected), "EUD", "CONNECTED"));
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"standaloneCallsign\":\" \"}}", 7);
+        assertEquals(expectedIdentity("EUD", "CONNECTED", ADDRESS, "-56 dBm",
+                "SCAN-WATCH", "Galaxy Watch"), BleDeviceAdapter.identityLines(
+                resources, client.withSessionIdentity(selected), "EUD", "CONNECTED"));
+        advertisements.clear();
+        assertEquals(expectedIdentity("EUD", "CONNECTED", ADDRESS, "-56 dBm",
+                "Unavailable", "Galaxy Watch"), BleDeviceAdapter.identityLines(
+                resources, client.withSessionIdentity(selected), "EUD", "CONNECTED"));
     }
 
     @Test public void selectedAndRestoredRowsRefreshProductAndBondWithoutUsingAlias() throws Exception {

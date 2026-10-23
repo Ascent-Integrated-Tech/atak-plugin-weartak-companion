@@ -158,6 +158,7 @@ public class WearTakBleClient {
     private static final long SCAN_EXPIRY_INTERVAL_MS = 1_000;
     // Scan responses are not present in every result; retain identity across scans/resets.
     private final LinkedHashMap<String, String> advertisedCallsigns = new LinkedHashMap<>();
+    private final LinkedHashMap<String, String> standaloneCallsigns = new LinkedHashMap<>();
 
     private ScanCallback activeScanCallback = null;
     private Runnable scanTimeoutRunnable = null;
@@ -371,6 +372,7 @@ public class WearTakBleClient {
         public final String name;
         public final String callsign;
         public final String advertisedCallsign;
+        public final String standaloneCallsign;
         public final String advertisedName;
         public final String bondedName;
         public final String productName;
@@ -384,15 +386,16 @@ public class WearTakBleClient {
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
                                  String address, int rssi) {
-            this(name, advertisedName, bondedName, address, rssi, null, null, name, false);
+            this(name, advertisedName, bondedName, address, rssi, null, null, name, false, null);
         }
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
                                  String address, int rssi, String callsign, String advertisedCallsign,
-                                 String productName, boolean bonded) {
+                                 String productName, boolean bonded, String standaloneCallsign) {
             this.name = name;
             this.callsign = callsign;
             this.advertisedCallsign = advertisedCallsign;
+            this.standaloneCallsign = standaloneCallsign;
             this.advertisedName = advertisedName;
             this.bondedName = bondedName;
             this.productName = productName;
@@ -419,7 +422,7 @@ public class WearTakBleClient {
             if (product == null && previous != null && address != null && address.equals(previous.address))
                 product = previous.productName;
             return new DiscoveredDevice(name, advertised, bondedName, address, rssi,
-                    null, null, product, bonded);
+                    null, null, product, bonded, null);
         }
 
         String distinctBondedName() {
@@ -498,7 +501,8 @@ public class WearTakBleClient {
                 device.address, device.rssi, callsign,
                 advertisedCallsigns.containsKey(device.address)
                         ? advertisedCallsigns.get(device.address) : device.advertisedCallsign,
-                product, bonded);
+                product, bonded, standaloneCallsigns.containsKey(device.address)
+                        ? standaloneCallsigns.get(device.address) : device.standaloneCallsign);
     }
 
     public interface ScanListener {
@@ -1737,10 +1741,21 @@ public class WearTakBleClient {
                     || "settings_request".equals(type) || "settings_changed".equals(type))) {
                 String key = "watch_info".equals(type) ? "cs" : "callsign";
                 synchronized (this) {
-                    if (receiveSession >= 0 && getReadySession() == receiveSession && !identity.isNull(key)
-                            && identity.has(key)) {
-                        sessionWatchCallsign = DiscoveredDevice.nonBlank(identity.optString(key));
-                        callsignSession = receiveSession;
+                    if (receiveSession >= 0 && getReadySession() == receiveSession) {
+                        if (!identity.isNull(key) && identity.has(key)) {
+                            sessionWatchCallsign = DiscoveredDevice.nonBlank(identity.optString(key));
+                            callsignSession = receiveSession;
+                        }
+                        if (identity.has("standaloneCallsign")) {
+                            Object value = identity.opt("standaloneCallsign");
+                            if (value instanceof String) {
+                                String address = bluetoothGatt.getDevice().getAddress();
+                                if (address != null) standaloneCallsigns.put(address,
+                                        DiscoveredDevice.nonBlank((String) value));
+                            } else {
+                                logW("Ignoring non-string standaloneCallsign");
+                            }
+                        }
                     }
                 }
             }

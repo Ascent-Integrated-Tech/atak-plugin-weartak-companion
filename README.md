@@ -82,7 +82,19 @@ No watch callsign is invented from a Bluetooth product name or alias. The old
 unlabeled MAC, RSSI badge, and secondary bond-name text are hidden in those rows;
 the identity block can expand without truncating the five fields. Gateway retains
 the compact `<watch callsign>, <product name> (bonded as <local ATAK callsign>)` label.
-The callsign comes from the ready watch session or A11A scan response; the product
+WEARTAK-273: The `WearTAK Callsign` line always identifies the watch's standalone
+(unbonded) identity, never the effective phone-managed `callsign`/`cs`. A new string
+`standaloneCallsign` in `watch_info`, `settings_request` or `settings_changed` payloads
+takes precedence over the A11A advertised callsign, then `Unavailable`. Older watches
+without that field remain compatible through their advertisement. The watch must
+advertise its standalone identity even while managed. Explicit standalone strings
+are accepted only from a ready session and cached by peer address for this client
+run so disconnects/resets do not replace them with phone identity. Sparse messages
+retain the observation; a blank string clears it back to advertisement fallback,
+and non-string/null values are ignored with a log. Observations never cross peer
+addresses and are not persisted across plugin restart. Other row fields/order and
+effective settings/PLI identity semantics are unchanged.
+The product
 label comes from Android's Bluetooth device name, not its alias. Android cannot
 guarantee this is the factory product name if the device name was changed elsewhere.
 The Gateway bond suffix uses this ATAK device's current callsign, never the system watch
