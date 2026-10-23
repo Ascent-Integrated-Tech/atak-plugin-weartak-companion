@@ -31,6 +31,7 @@ import java.util.function.Consumer;
 final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     private final MapView map;
     private final BleCotBridge origin;
+    private final ReceivedCotTiming sourceTiming;
     private final Set<MapItem> observed = new HashSet<>();
     private Consumer<Map<String, Object>> listener;
     private Consumer<String> removed;
@@ -40,9 +41,10 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     private final PointMapItem.OnPointChangedListener point = this::changed;
     private final Shape.OnPointsChangedListener shape = this::changed;
 
-    GarminMapEntitySource(MapView map, BleCotBridge origin) {
+    GarminMapEntitySource(MapView map, BleCotBridge origin, ReceivedCotTiming sourceTiming) {
         this.map = map;
         this.origin = origin;
+        this.sourceTiming = sourceTiming;
     }
 
     @Override public synchronized void subscribe(Consumer<Map<String, Object>> listener, Consumer<String> removed) {
@@ -126,15 +128,18 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             boolean user = GarminEntityAdapter.groundUserType(event.getType())
                     && item instanceof Marker && PhoneUserCot.isUser(item, event)
                     && event.findDetail("emergency") == null;
+            boolean sourceTimed = !user && event.findDetail("emergency") == null
+                    && !PhoneEmergencyRelay.isEmergencyType(event.getType());
             if (user && !GarminEntityAdapter.validUserLifetime(updated, duration)) {
                 warning("Garmin user omitted: missing or invalid source lifetime for " + item.getUID());
                 return null;
             }
-            if (GarminEntityAdapter.validUserLifetime(updated, duration)) {
+            if (!sourceTimed && GarminEntityAdapter.validUserLifetime(updated, duration)) {
                 event.setTime(new CoordinatedTime(updated));
                 event.setStart(new CoordinatedTime(updated));
                 event.setStale(new CoordinatedTime(updated + duration));
             }
+            if (sourceTimed && !sourceTiming.apply(item, event)) return null;
             return normalize(event, item);
         } catch (RuntimeException e) {
             LogX.w("WTK/GarminEntity", "Unable to normalize map entity", e);
@@ -209,15 +214,18 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             meta.put("cancel", "true".equalsIgnoreCase(attribute(emergency, "cancel")));
         }
         if (item != null) {
+            boolean captured = !user && emergency == null
+                    && !PhoneEmergencyRelay.isEmergencyType(event.getType())
+                    && sourceTiming.source(item) != null;
             String revision = item.getMetaString("time", "");
             if (revision.isEmpty()) {
                 long updated = item.getMetaLong("lastUpdateTime", 0);
                 if (updated > 0) revision = java.time.Instant.ofEpochMilli(updated).toString();
             }
             // Exporters may synthesize new times; a map update's own revision wins.
-            if (!revision.isEmpty()) meta.put("time", revision);
+            if (!revision.isEmpty() && !captured) meta.put("time", revision);
             String stale = item.getMetaString("stale", "");
-            if (!stale.isEmpty()) meta.put("stale", stale);
+            if (!stale.isEmpty() && !captured) meta.put("stale", stale);
             meta.put("state", item.getMetaString("state", ""));
             meta.put("alertState", item.getMetaString("alertState", ""));
             meta.put("active", item.getMetaBoolean("active", true));

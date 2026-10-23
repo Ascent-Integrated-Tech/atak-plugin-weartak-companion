@@ -28,6 +28,7 @@ final class PhoneMarkerMapRelay {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final PhoneMarkerRelay policy;
     private final WearTakBleClient client;
+    private final ReceivedCotTiming sourceTiming;
     private final Map<Marker, Runnable> markers = new IdentityHashMap<>();
     private final PointMapItem.OnPointChangedListener pointListener = item -> changed(item);
     private final MapItem.OnMetadataChangedListener metadataListener = (item, key) -> changed(item);
@@ -36,9 +37,10 @@ final class PhoneMarkerMapRelay {
     private MapEventDispatcher dispatcher;
     private MapView mapView;
 
-    PhoneMarkerMapRelay(PhoneMarkerRelay policy, WearTakBleClient client) {
+    PhoneMarkerMapRelay(PhoneMarkerRelay policy, WearTakBleClient client, ReceivedCotTiming sourceTiming) {
         this.policy = policy;
         this.client = client;
+        this.sourceTiming = sourceTiming;
     }
 
     synchronized void start(MapView view) {
@@ -99,6 +101,7 @@ final class PhoneMarkerMapRelay {
 
         attach(item);
         if (event.getExtras() != null && event.getExtras().getBoolean(WATCH_IMPORT, false)) {
+            item.setMetaBoolean(WATCH_IMPORT, true);
             try {
                 policy.watchImported(snapshot(item));
             } catch (RuntimeException e) {
@@ -245,11 +248,14 @@ final class PhoneMarkerMapRelay {
         if (!PhoneMarkerRelay.supportedType(item.getType())) return null;
         CotEvent event = CotEventFactory.createCotEvent(item);
         if (event == null || event.getCotPoint() == null) return null;
+        SourceCotTiming timing = sourceTiming.source(item);
+        if (!sourceTiming.apply(item, event, timing)) return null;
         CotPoint point = event.getCotPoint();
         StringBuilder xml = new StringBuilder();
         event.buildXml(xml);
         String fingerprint = event.getType() + "|" + event.getHow() + "|" + point.toString()
                 + "|" + (event.getDetail() == null ? "" : event.getDetail().toString());
+        if (timing != null) fingerprint = timing.fingerprint(fingerprint);
         boolean excluded = mapView == null || item == mapView.getSelfMarker()
                 || (mapView.getSelfMarker() != null
                     && item.getUID().equals(mapView.getSelfMarker().getUID()))

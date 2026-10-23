@@ -5,7 +5,8 @@ import com.atakmap.android.maps.MapItem;
 /** ATAK 5.8 only accepts metadata listeners scoped to a key, so observe the keys that affect exported CoT. */
 final class MetadataObservers {
     private static final String[] KEYS = {"callsign", "title", "remarks", "team", "role", "color", "how",
-            "state", "alertState", "active", "emergency.cancel", "time", "stale", "lastUpdateTime"};
+            "state", "alertState", "active", "emergency.cancel", "time", "start", "stale", "lastUpdateTime",
+            ReceivedCotTiming.META};
 
     private MetadataObservers() {}
 

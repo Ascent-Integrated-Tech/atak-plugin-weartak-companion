@@ -51,6 +51,7 @@ public class BleCotBridge {
     private final Map<String, Map<String, Object>> resolvedGarminMarkers = new java.util.LinkedHashMap<>();
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
+    private ReceivedCotTiming receivedCotTiming;
     private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
     private volatile WearTakBleClient bleClient;
     private GarminConnectIqClient garminClient;
@@ -918,7 +919,13 @@ public class BleCotBridge {
     }
 
     public List<Map<String, Object>> getGarminEntitySnapshot(int requestedLimit) {
-        return new GarminMapEntitySource(mapView, this).snapshot(Math.max(1, Math.min(50, requestedLimit)));
+        if (receivedCotTiming == null) throw new IllegalStateException("Source timing observer not configured");
+        return new GarminMapEntitySource(mapView, this, receivedCotTiming)
+                .snapshot(Math.max(1, Math.min(50, requestedLimit)));
+    }
+
+    void setReceivedCotTiming(ReceivedCotTiming timing) {
+        receivedCotTiming = timing;
     }
 
     // =========================================================================================

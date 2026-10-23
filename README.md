@@ -1118,14 +1118,20 @@ The envelope remains:
 {"msg_type":"phone_marker_cot","payload":{"cot":"<event ...>...</event>"}}
 ```
 
-Supported types are exactly `a-f-G`, `a-u-G`, `a-h-G`, `a-n-G`, and
-`b-m-p-s-p-i`. Self/PLI, emergency, non-exportable items, shapes, routes, and
+Supported types are all `a-*` atoms and SPI `b-m-p-s-p-i`.
+Self/PLI, emergency, non-exportable items, shapes, routes, and
 unsupported types are excluded. Exported identity must match the map item,
 coordinates must be in range, HAE/CE/LE finite, and all timestamps positive.
-The ATAK SDK export is sent unchanged: UID, type, point, time/start/stale, and
-detail are not rewritten. Note that ATAK's default marker exporter itself
-generates current time/start and its configured stale interval; this is not a
-reconstruction of the original inbound network packet.
+The ATAK SDK export preserves UID, type, point and detail. For received tracks,
+the original network `time`, `start` and `stale` replace the exporter's synthesized
+timestamps, on both WearOS and Garmin. An additive communications observer retains
+source timing in a bounded 512-UID cache and item metadata; it does not consume or
+replace ATAK import processing. ATAK's receipt time and inflated stale grace period
+are not used to reconstruct source expiry. Expiry-only source updates are forwarded,
+and expired source deadlines are never extended. Persistent locally created points
+keep ATAK's default lifetime. If an existing imported track has no retained source
+expiry (for example, after starting the plugin), export waits for its next source
+update rather than inventing a one-year expiry. User/contact PLI routing is unchanged.
 
 Watch imports carry an internal ATAK import-source flag. The resulting marker
 snapshot suppresses immediate echoes and identical later notifications, not
