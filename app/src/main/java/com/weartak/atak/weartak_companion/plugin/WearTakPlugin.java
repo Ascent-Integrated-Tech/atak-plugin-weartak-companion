@@ -2213,38 +2213,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void refreshDeviceListUi() {
         if (deviceAdapter == null) return;
-        // Create a copy so we don't mutate scannedDevices ordering if you care
-        ArrayList<WearTakBleClient.DiscoveredDevice> copy = new ArrayList<>();
-        for (WearTakBleClient.DiscoveredDevice d : scannedDevices) {
-            if (d == null || d.address == null) continue;
-            if (currentConnectedAddress != null && currentConnectedAddress.equals(d.address)) continue;
-            copy.add(d);
-        }
-
-        Collections.sort(copy, (a, b) -> {
-            // 1) connected first
-            boolean aConn = a.address != null && a.address.equals(currentConnectedAddress);
-            boolean bConn = b.address != null && b.address.equals(currentConnectedAddress);
-            if (aConn != bConn) return aConn ? -1 : 1;
-
-            // 2) preferred next
-            String pref = loadPreferredAddress(); // from prefs
-            boolean aPref = pref != null && pref.equals(a.address);
-            boolean bPref = pref != null && pref.equals(b.address);
-            if (aPref != bPref) return aPref ? -1 : 1;
-
-            // 3) name then address (stable)
-            String an = a.name == null ? "" : a.name;
-            String bn = b.name == null ? "" : b.name;
-            int c = an.compareToIgnoreCase(bn);
-            if (c != 0) return c;
-
-            String aa = a.address == null ? "" : a.address;
-            String ba = b.address == null ? "" : b.address;
-            return aa.compareToIgnoreCase(ba);
-        });
-
-        deviceAdapter.setDevices(copy);
+        deviceAdapter.setDevices(ScanDeviceList.visibleRows(scannedDevices, currentConnectedAddress,
+                bleClient != null && bleClient.isConnected(), this::loadPreferredAddress));
     }
 
     private void resetDeviceScreenOnOpen() {
