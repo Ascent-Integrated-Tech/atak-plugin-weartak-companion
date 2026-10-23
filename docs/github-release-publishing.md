@@ -17,13 +17,25 @@ GitHub behavior.
 The rolling release uses the fixed tag `tak-gov-ci-cd-pipeline`. Each asset is
 named `WearTAK-ATAK-Plugin-civ-release-pipeline-<pipeline-id>.apk`; the release
 description links to the current asset and includes its source commit, pipeline,
-plugin version, and SHA-256. Each managed APK has a specific ownership label
-containing its SHA-256, and the release description includes an ownership
+manifest versionName/versionCode, and SHA-256. The versioned Forge release title
+uses the plugin version and project pipeline IID (global pipeline ID when an IID
+is unavailable). The notes distinguish both pipeline identifiers, link to canonical
+TAK.gov source, and explain that GitHub Source code archives use a fixed anchor
+tag rather than the authoritative source SHA. Generated notes sit between hidden
+ownership markers; manual content outside that block is preserved, including when
+migrating the legacy notes that ended at the checksum line.
+
+Each managed APK has the readable display label
+"Download signed WearTAK Companion APK"; its checksum is stored separately in
+GitHub's asset digest and the release description. The description includes an ownership
 marker. The new asset is uploaded and downloaded for a byte-for-byte
 verification before the release description changes. Cleanup requires that the
 release description already carry the ownership marker, plus the exact publisher
-label and filename pattern, and a downloaded asset hash matching the hash in
-that label. Unlabeled, mismatched, or otherwise unverifiable assets are retained.
+label and filename pattern, and a downloaded asset hash matching the GitHub
+SHA-256 digest. Legacy `WearTAK Companion managed APK sha256=...` labels are
+also recognized using their embedded hash; a verified same-pipeline legacy asset
+can be relabeled in place without re-uploading its bytes. Unlabeled, mismatched,
+or otherwise unverifiable assets are retained.
 Other release assets and every separately tagged release are left untouched. A
 failed upload or verification leaves the existing release description and APK
 usable.
