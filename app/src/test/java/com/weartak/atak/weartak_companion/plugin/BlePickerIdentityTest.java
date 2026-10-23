@@ -389,7 +389,45 @@ public class BlePickerIdentityTest {
                 any(), any(), any(), any(), any(), any())).thenAnswer(i -> expectedIdentity(
                         i.getArgument(1), i.getArgument(2), i.getArgument(3),
                         i.getArgument(4), i.getArgument(5), i.getArgument(6)));
+        when(resources.getString(eq(R.string.watch_gateway_identity_lines), any(), any(), any(), any()))
+                .thenAnswer(i -> "Bluetooth Address: " + i.getArgument(1)
+                        + "\nBluetooth Strength: " + i.getArgument(2)
+                        + "\nWearTAK Callsign: " + i.getArgument(3)
+                        + "\nWearTAK Product Name: " + i.getArgument(4));
         return resources;
+    }
+
+    @Test public void garminUsesSameFiveLabelsWithoutInventingMacOrSignalFromSdkIdentifier() {
+        Resources resources = identityResources();
+        assertEquals(expectedIdentity("EUD", "CONNECTED", "Unavailable", "Unavailable",
+                "GARMIN-WATCH", "fenix 8"), BleDeviceAdapter.identityLines(resources,
+                "EUD", "CONNECTED", null, 0, "GARMIN-WATCH", "fenix 8", false));
+        assertEquals(expectedIdentity("EUD", "PAUSED", "Unavailable", "Unavailable",
+                "Unavailable", "Unavailable"), BleDeviceAdapter.identityLines(resources,
+                "EUD", "PAUSED", null, 0, null, null, false));
+    }
+
+    @Test public void samsungMissingCandidateKeepsEveryLabelAndStatusWithPlaceholders() {
+        assertEquals(expectedIdentity("EUD", "NOT CONNECTED", "Unavailable", "Unavailable",
+                "Unavailable", "Unavailable"), BleDeviceAdapter.identityLines(identityResources(),
+                null, "EUD", "NOT CONNECTED", false));
+    }
+
+    @Test public void gatewayHasExactlyFourAlphabeticalLabelsAndNoAtakIdentityForAnyTransport() {
+        Resources resources = identityResources();
+        for (boolean available : new boolean[]{true, false}) {
+            String block = BleDeviceAdapter.identityLines(resources, "DO-NOT-SHOW", "CONNECTED",
+                    available ? ADDRESS : null, available ? -47 : 0,
+                    available ? "WATCH" : null, available ? "Galaxy Watch" : null, true);
+            assertEquals(4, block.split("\n").length);
+            assertFalse(block.contains("ATAK Callsign:"));
+            assertFalse(block.contains("DO-NOT-SHOW"));
+            assertFalse(block.contains("CONNECTED"));
+            assertEquals("Bluetooth Address: " + (available ? ADDRESS : "Unavailable")
+                    + "\nBluetooth Strength: " + (available ? "-47 dBm" : "Unavailable")
+                    + "\nWearTAK Callsign: " + (available ? "WATCH" : "Unavailable")
+                    + "\nWearTAK Product Name: " + (available ? "Galaxy Watch" : "Unavailable"), block);
+        }
     }
 
     private static String expectedIdentity(String local, String status, String address,

@@ -32,6 +32,14 @@ features, leave it unchecked and record **N/A** with the reason in the results.
   selected transport stays active; no stale connected status or old-watch data.
 - [ ] **Settings:** change callsign and supported settings, save, reconnect, and
   reopen settings. The watch applies them; a failed sync is not shown as success.
+- [ ] **Watch identity details (WEARTAK-279):** in supported Samsung/Garmin panels,
+  verify the five alphabetical labels match BLE and the ATAK status follows the
+  panel chip. Garmin MAC/RSSI show Unavailable, not the SDK numeric identifier.
+  Unknown standalone callsign shows Unavailable, never phone-managed identity.
+  Check absent/disconnected and multiple Garmin watches; rows wrap and scroll.
+  Gateway admitted/discovery rows show only the four watch/Bluetooth labels,
+  without ATAK Callsign or a local ATAK bond suffix. Existing purpose restrictions
+  remain unchanged; this does not enable Garmin Configure or non-BLE Gateway.
 - [ ] **Managed/standalone:** exercise Bond Single Watch and Configure Single Watch
   on BLE/Samsung. With compatible firmware, intentional disconnect releases phone
   management. Standalone settings and certificates persist. On Traditional BLE,

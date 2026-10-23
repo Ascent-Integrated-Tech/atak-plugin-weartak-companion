@@ -177,11 +177,19 @@
                 android:contentDescription="WearTAK watch settings"
                 android:enabled="false" />
             </LinearLayout>
+            <TextView
+                android:id="@+id/systemBondedIdentity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="12dp"
+                android:textStyle="bold"
+                android:textSize="14sp" />
         </LinearLayout>
         <LinearLayout
             android:id="@+id/garminPanel"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:orientation="vertical">
         <LinearLayout
             android:layout_width="match_parent"
@@ -223,6 +231,17 @@
                 android:contentDescription="WearTAK watch settings"
                 android:enabled="false" />
         </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <LinearLayout
+                android:id="@+id/garminIdentityRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
 
         <TextView
             android:id="@+id/garminConnectionStatus"

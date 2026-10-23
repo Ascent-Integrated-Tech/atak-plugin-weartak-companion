@@ -46,6 +46,7 @@ public final class GarminConnectIqClient {
         volatile String relaySession = "";
         volatile int entitySyncVersion = 1;
         volatile String watchUid = "";
+        String standaloneCallsign;
         long linkGeneration;
         DeviceApp(IQDevice device) {
             this.device = device;
@@ -258,6 +259,45 @@ public final class GarminConnectIqClient {
         synchronized (lock) {
             return status;
         }
+    }
+
+    static final class WatchIdentity {
+        final long deviceId;
+        final String product, callsign;
+        final boolean connected;
+        WatchIdentity(long deviceId, String product, String callsign, boolean connected) {
+            this.deviceId = deviceId;
+            this.product = product;
+            this.callsign = callsign;
+            this.connected = connected;
+        }
+    }
+
+    synchronized List<WatchIdentity> watchIdentities() {
+        List<WatchIdentity> result = new ArrayList<>();
+        synchronized (lock) {
+            for (DeviceApp entry : devices.values()) {
+                result.add(new WatchIdentity(entry.device.getDeviceIdentifier(),
+                        entry.device.getFriendlyName(), entry.standaloneCallsign, entry.connected));
+            }
+        }
+        result.sort(java.util.Comparator.comparingLong(identity -> identity.deviceId));
+        return result;
+    }
+
+    static String standaloneIdentity(JSONObject envelope, String previous) {
+        String type = envelope.optString("msgType");
+        if (!"watch_settings".equals(type) && !"relay_hello".equals(type)) return previous;
+        JSONObject payload = envelope.optJSONObject("payload");
+        if (payload == null) return previous;
+        Object explicit = payload.opt("standaloneCallsign");
+        if (explicit instanceof String) return ((String) explicit).trim();
+        if ("watch_settings".equals(type) && Boolean.FALSE.equals(payload.opt("phoneManagedSettings"))) {
+            Object callsign = payload.opt("callsign");
+            if (callsign instanceof String && !((String) callsign).trim().isEmpty())
+                return ((String) callsign).trim();
+        }
+        return previous;
     }
 
     public boolean isConnected() {
@@ -567,6 +607,7 @@ public final class GarminConnectIqClient {
                                 if (item instanceof Map) {
                                     JSONObject envelope = toJsonObject((Map<?, ?>) item);
                                     if (envelope != null && listener != null) {
+                                        entry.standaloneCallsign = standaloneIdentity(envelope, entry.standaloneCallsign);
                                         if ("relay_hello".equals(envelope.optString("msgType"))) {
                                             JSONObject hello = envelope.optJSONObject("payload");
                                             entry.relaySession = hello == null ? "" : hello.optString("relaySession", "");

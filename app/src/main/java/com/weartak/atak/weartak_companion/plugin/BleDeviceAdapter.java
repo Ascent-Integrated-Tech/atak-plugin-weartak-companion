@@ -142,14 +142,28 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     static String identityLines(Resources resources, WearTakBleClient.DiscoveredDevice device,
                                 String localCallsign, String status) {
-        String unknown = resources.getString(R.string.watch_identity_unavailable);
+        return identityLines(resources, device, localCallsign, status, false);
+    }
+
+    static String identityLines(Resources resources, WearTakBleClient.DiscoveredDevice device,
+                                String localCallsign, String status, boolean gateway) {
+        if (device == null) return identityLines(resources, localCallsign, status,
+                null, 0, null, null, gateway);
         String watch = nonBlank(device.standaloneCallsign);
         if (watch == null) watch = nonBlank(device.advertisedCallsign);
+        return identityLines(resources, localCallsign, status, device.address,
+                device.rssi, watch, device.productName, gateway);
+    }
+
+    static String identityLines(Resources resources, String localCallsign, String status,
+                                String address, int rssi, String watch, String product, boolean gateway) {
+        String unknown = resources.getString(R.string.watch_identity_unavailable);
+        String strength = rssi == 0 ? unknown : resources.getString(R.string.watch_identity_dbm, rssi);
+        if (gateway) return resources.getString(R.string.watch_gateway_identity_lines,
+                available(address, unknown), strength, available(watch, unknown), available(product, unknown));
         return resources.getString(R.string.watch_identity_lines,
                 available(localCallsign, unknown), available(status, unknown),
-                available(device.address, unknown),
-                device.rssi == 0 ? unknown : resources.getString(R.string.watch_identity_dbm, device.rssi),
-                available(watch, unknown), available(device.productName, unknown));
+                available(address, unknown), strength, available(watch, unknown), available(product, unknown));
     }
 
     private static String available(String value, String unknown) {

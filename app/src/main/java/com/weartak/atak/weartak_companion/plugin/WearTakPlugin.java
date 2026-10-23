@@ -23,6 +23,7 @@ import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -91,6 +92,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private SystemBondedWatchConnection systemBondedConnection;
     private boolean systemBondedEnabled;
     private TextView systemBondedWatchStatus;
+    private TextView systemBondedIdentity;
+    private LinearLayout garminIdentityRows;
     private Button systemBondedConnectButton;
     private View systemBondedSettingsButton;
     private View bleSettingsButton;
@@ -748,10 +751,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
                     String diagnosticType = pointEnvelope.optString("msgType",
                             pointEnvelope.optString("msg_type", ""));
-                    if (selectedDevice != null && ("watch_info".equals(diagnosticType)
+                    if ("watch_info".equals(diagnosticType)
                             || "settings_request".equals(diagnosticType)
-                            || "settings_changed".equals(diagnosticType))) {
-                        bindConnectedCard(connectedCardView, selectedDevice);
+                            || "settings_changed".equals(diagnosticType)) {
+                        refreshIdentityStatus();
                         refreshDeviceListUi();
                     }
                     if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
@@ -1177,6 +1180,43 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (deviceAdapter != null) deviceAdapter.setPanelStatus(panelStatusText());
         if (connectedCardView != null && selectedDevice != null)
             bindConnectedCard(connectedCardView, selectedDevice);
+        if (systemBondedIdentity != null) {
+            WearTakBleClient.DiscoveredDevice candidate = systemBondedConnection == null
+                    ? null : systemBondedConnection.getCandidate();
+            if (candidate != null && bleClient != null) candidate = bleClient.withSessionIdentity(candidate);
+            systemBondedIdentity.setText(BleDeviceAdapter.identityLines(systemBondedIdentity.getResources(),
+                    candidate, getPhoneCallsign(),
+                    systemBondedWatchStatus == null ? null : systemBondedWatchStatus.getText().toString(),
+                    gatewayPurpose));
+        }
+        renderGarminIdentities();
+    }
+
+    private void renderGarminIdentities() {
+        if (garminIdentityRows == null) return;
+        garminIdentityRows.removeAllViews();
+        List<GarminConnectIqClient.WatchIdentity> identities = garminClient == null
+                ? Collections.emptyList() : garminClient.watchIdentities();
+        if (identities.isEmpty()) {
+            addGarminIdentity(null);
+        } else {
+            for (GarminConnectIqClient.WatchIdentity identity : identities) addGarminIdentity(identity);
+        }
+    }
+
+    private void addGarminIdentity(GarminConnectIqClient.WatchIdentity identity) {
+        TextView row = new TextView(garminIdentityRows.getContext());
+        row.setTextSize(14);
+        row.setTypeface(null, android.graphics.Typeface.BOLD);
+        int padding = Math.round(12 * row.getResources().getDisplayMetrics().density);
+        row.setPadding(padding, padding, padding, padding);
+        String status = garminConnectionBadgeTV == null ? null : garminConnectionBadgeTV.getText().toString();
+        if (identity != null && !identity.connected && !"PAUSED".equals(status)
+                && !"OFF".equals(status)) status = "NOT CONNECTED";
+        row.setText(BleDeviceAdapter.identityLines(row.getResources(), getPhoneCallsign(), status,
+                null, 0, identity == null ? null : identity.callsign,
+                identity == null ? null : identity.product, gatewayPurpose));
+        garminIdentityRows.addView(row);
     }
 
     private String singleWatchConnectionStatus() {
@@ -1651,8 +1691,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             @Override
                             public void onMessageReceived(JSONObject envelope, GarminEntityForwarder.Link link) {
                                 mainHandler.post(() -> {
-                                    if (connectionModes.isCurrent(token) && link != null && link.isCurrent())
+                                    if (connectionModes.isCurrent(token) && link != null && link.isCurrent()) {
                                         handleGarminMessage(envelope, link);
+                                        renderGarminIdentities();
+                                    }
                                 });
                             }
                         });
@@ -1744,6 +1786,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (garminConnectionStatusTV != null) {
             garminConnectionStatusTV.setVisibility(View.GONE);
         }
+        renderGarminIdentities();
     }
 
     private void renderGarminConnecting() {
@@ -1751,6 +1794,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         garminConnectionBadgeTV.setText("CONNECTING");
         garminConnectionBadgeTV.setTextColor(android.graphics.Color.WHITE);
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_warning);
+        renderGarminIdentities();
     }
 
     private void renderGarminOff() {
@@ -1758,6 +1802,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         garminConnectionBadgeTV.setText("OFF");
         garminConnectionBadgeTV.setTextColor(android.graphics.Color.WHITE);
         garminConnectionBadgeTV.setBackgroundResource(R.drawable.bg_chip_neutral);
+        renderGarminIdentities();
     }
 
     private void refreshGarminSettingsLink() {
@@ -2101,6 +2146,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             connectionStatusTV = paneView.findViewById(R.id.connection_status);
             locationDiagnosticsStatus = paneView.findViewById(R.id.locationDiagnosticsStatus);
             garminConnectionStatusTV = paneView.findViewById(R.id.garminConnectionStatus);
+            garminIdentityRows = paneView.findViewById(R.id.garminIdentityRows);
             garminConnectionBadgeTV = paneView.findViewById(R.id.garminConnectionBadge);
             garminSettingsButton = paneView.findViewById(R.id.garminSettingsButton);
             garminSettingsButton.setOnClickListener(v -> openGarminSettings());
@@ -2145,6 +2191,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             deviceList = paneView.findViewById(R.id.deviceList);
             emptyState = paneView.findViewById(R.id.emptyState);
             systemBondedWatchStatus = paneView.findViewById(R.id.systemBondedWatchStatus);
+            systemBondedIdentity = paneView.findViewById(R.id.systemBondedIdentity);
             systemBondedConnectButton = paneView.findViewById(R.id.systemBondedConnectButton);
             systemBondedConnectButton.setOnClickListener(v -> toggleWearableConnection());
             systemBondedSettingsButton = paneView.findViewById(R.id.systemBondedSettingsButton);
