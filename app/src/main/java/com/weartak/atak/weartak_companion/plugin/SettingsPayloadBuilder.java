@@ -9,6 +9,25 @@ import java.util.List;
 final class SettingsPayloadBuilder {
     private SettingsPayloadBuilder() { }
 
+    static List<JSONObject> identityChanges(List<String> previous, String callsign, String team, String role)
+            throws JSONException {
+        String[] values = {callsign, team, role};
+        String[] keys = {"callsign", "team", "role"};
+        List<JSONObject> commands = new java.util.ArrayList<>();
+        for (int i = 0; i < keys.length; i++) {
+            if (values[i] == null || values[i].trim().isEmpty())
+                throw new IllegalArgumentException("Live identity sync requires nonblank phone identity.");
+            if (previous == null || !values[i].equals(previous.get(i))) {
+                JSONObject envelope = new JSONObject();
+                envelope.put("vers", 1);
+                envelope.put("msg_type", "set_" + keys[i]);
+                envelope.put("payload", new JSONObject().put(keys[i], values[i]));
+                commands.add(envelope);
+            }
+        }
+        return commands;
+    }
+
     static JSONObject build(List<TakServerItem> servers, Integer interval, String callsign,
                             String team, String role, boolean managed) throws JSONException {
         if (interval != null && interval <= 0) {

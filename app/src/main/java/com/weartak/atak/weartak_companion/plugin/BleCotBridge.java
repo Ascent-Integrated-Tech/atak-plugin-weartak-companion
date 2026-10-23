@@ -52,7 +52,6 @@ public class BleCotBridge {
     private MapView mapView;
     private String myUid;
     private final java.util.Set<String> garminOriginMarkers = new java.util.LinkedHashSet<>();
-    private String pluginCallsign;
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
     private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
@@ -69,8 +68,11 @@ public class BleCotBridge {
         internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
         mapView = getMapView();
         myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
-        pluginCallsign = mapView.getDeviceCallsign();  // cs of eud
         LogX.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
+    }
+
+    private String pluginCallsign() {
+        return PhoneIdentity.callsign(mapView);
     }
 
     public synchronized void startChatForwarding(WearTakBleClient client) {
@@ -197,7 +199,7 @@ public class BleCotBridge {
             }
 
             EudFix fix = getEudFix();
-            String xml = LegacyPliCot.build(p, myUid, pluginCallsign,
+            String xml = LegacyPliCot.build(p, myUid, pluginCallsign(),
                     fix.lat, fix.lon, fix.hae, fix.ce, fix.le,
                     PhoneIdentity.metadata(mapView), System.currentTimeMillis());
 
@@ -306,9 +308,9 @@ public class BleCotBridge {
             double ce = location.ce;
             double le = location.le;
 
-            String callsign = pluginCallsign;
+            String callsign = pluginCallsign();
             if (watchAsSource || usePayloadLocation) {
-                callsign = optString(p, "cs", pluginCallsign);
+                callsign = optString(p, "cs", pluginCallsign());
             }
 
             Integer batteryPct = optIntNullable(p, "bat");
@@ -498,9 +500,9 @@ public class BleCotBridge {
             String callsign = "";
             if (watchAsSource) {
                 // use watch callsign, if not, fallback to this EUD callsign.
-                callsign = optString(p, "cs", pluginCallsign);
+                callsign = optString(p, "cs", pluginCallsign());
             } else {
-                callsign = pluginCallsign;
+                callsign = pluginCallsign();
             }
 
             String alertType = optString(p, "alertType", null);
@@ -578,7 +580,7 @@ public class BleCotBridge {
             String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
 
-            String callsign = watchAsSource ? optString(p, "callsign", pluginCallsign) : pluginCallsign;
+            String callsign = watchAsSource ? optString(p, "callsign", pluginCallsign()) : pluginCallsign();
 
             EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
 
@@ -775,7 +777,7 @@ public class BleCotBridge {
             case "emergency":
                 if (!payload.has("callsign")) {
                     try {
-                        payload.put("callsign", pluginCallsign);
+                        payload.put("callsign", pluginCallsign());
                     } catch (JSONException e) {
                         LogX.e(TAG, "Could not set Garmin emergency callsign", e);
                     }
@@ -799,7 +801,7 @@ public class BleCotBridge {
                     ChatReplyPayload reply = new ChatReplyPayload(payload);
                     GarminChatPolicy.reply(payload,
                             Contacts.getInstance().getContactByUuid(reply.roomUid) instanceof GroupContact);
-                    if (!payload.has("cs")) payload.put("cs", pluginCallsign);
+                    if (!payload.has("cs")) payload.put("cs", pluginCallsign());
                     sendChat(envelope.toString());
                 } catch (JSONException | IllegalArgumentException e) {
                     LogX.w(TAG, "Garmin chat rejected: " + e.getMessage());
