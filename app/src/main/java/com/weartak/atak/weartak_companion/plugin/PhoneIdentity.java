@@ -9,6 +9,10 @@ import com.atakmap.android.util.ATAKConstants;
 final class PhoneIdentity {
     private PhoneIdentity() {}
 
+    static String callsign(MapView mapView) {
+        return mapView == null ? "" : value(mapView.getDeviceCallsign(), "");
+    }
+
     static String team(MapView mapView) {
         return value(mapView == null ? null
                 : mapView.getMapData().getMetaString("deviceTeam", null), "Blue");

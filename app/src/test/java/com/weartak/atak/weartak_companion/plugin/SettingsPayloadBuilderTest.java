@@ -8,6 +8,54 @@ import java.util.Collections;
 import static org.junit.Assert.*;
 
 public class SettingsPayloadBuilderTest {
+    @Test public void eachLiveChangeSendsOnlyItsMatchingCommandAndField() throws Exception {
+        java.util.List<String> before = java.util.Arrays.asList("OLD", "Blue", "Team Member");
+        String[] fields = {"callsign", "team", "role"};
+        String[] replacements = {"NEW", "Red", "Medic"};
+        for (int i = 0; i < fields.length; i++) {
+            java.util.List<String> after = new java.util.ArrayList<>(before);
+            after.set(i, replacements[i]);
+            java.util.List<JSONObject> commands = SettingsPayloadBuilder.identityChanges(
+                    before, after.get(0), after.get(1), after.get(2));
+            assertEquals(1, commands.size());
+            JSONObject command = commands.get(0);
+            assertEquals(3, command.length());
+            assertEquals(1, command.getInt("vers"));
+            assertEquals("set_" + fields[i], command.getString("msg_type"));
+            JSONObject payload = command.getJSONObject("payload");
+            assertEquals(1, payload.length());
+            assertEquals(replacements[i], payload.getString(fields[i]));
+            for (String absent : new String[]{"takServerList", "reportIntSecs", "p12Cert",
+                    "p12CertPassword", "phoneManagedSettings", "standaloneCallsign"})
+                assertFalse(payload.has(absent));
+        }
+    }
+
+    @Test public void unchangedIdentitySendsNothingAndCoalescedChangesStaySeparate() throws Exception {
+        java.util.List<String> before = java.util.Arrays.asList("OLD", "Blue", "Team Member");
+        assertTrue(SettingsPayloadBuilder.identityChanges(before, "OLD", "Blue", "Team Member").isEmpty());
+        java.util.List<JSONObject> commands = SettingsPayloadBuilder.identityChanges(before, "NEW", "Red", "Medic");
+        assertEquals(3, commands.size());
+        assertEquals("set_callsign", commands.get(0).getString("msg_type"));
+        assertEquals("set_team", commands.get(1).getString("msg_type"));
+        assertEquals("set_role", commands.get(2).getString("msg_type"));
+        for (JSONObject command : commands) assertEquals(1, command.getJSONObject("payload").length());
+        assertEquals("OLD", before.get(0));
+    }
+
+    @Test public void newSessionCanSendCurrentValuesWithoutPriorPeerIdentity() throws Exception {
+        assertEquals(3, SettingsPayloadBuilder.identityChanges(null, "PHONE", "Blue", "Medic").size());
+    }
+
+    @Test public void invalidLiveIdentityIsRejectedBeforeAnyCommandsAreReturned() throws Exception {
+        assertThrows(IllegalArgumentException.class,
+                () -> SettingsPayloadBuilder.identityChanges(null, "", "Blue", "Medic"));
+        assertThrows(IllegalArgumentException.class,
+                () -> SettingsPayloadBuilder.identityChanges(null, "PHONE", null, "Medic"));
+        assertThrows(IllegalArgumentException.class,
+                () -> SettingsPayloadBuilder.identityChanges(null, "PHONE", "Blue", " "));
+    }
+
     @Test
     public void oneTimeUploadPreservesP12AndCustomWatchCallsignWithoutPhoneManagement() throws Exception {
         TakServerItem server = TakServerItem.fromJson(new JSONObject()

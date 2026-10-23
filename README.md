@@ -103,6 +103,24 @@ connections continue to use `TRANSPORT_LE`. Samsung-owned connects still require
 an existing system bond. This does not bypass pairing confirmation or repair an
 independent SMP confirmation timeout.
 
+WEARTAK-276: While a single watch is connected over BLE with phone-managed
+identity enabled, ATAK preference/self-marker changes push the current phone
+callsign, team and role through `set_callsign`, `set_team` and `set_role` without a
+reconnect. Events are coalesced on the main thread and unchanged identity is not
+resent. Changes during the initial management handshake are deferred until it
+finishes, using the latest phone identity. Disconnected, standalone/setup,
+Gateway, Garmin, management-release and failed-handshake sessions do not send
+these automatic BLE updates. Observers unregister on plugin stop.
+
+Each live command contains only its matching changed `callsign`, `team` or `role` field.
+They never include reporting intervals, servers, certificates, management mode
+or the watch's standalone callsign. Reconnect-time full settings sync remains
+unchanged. Live sends do not block subsequent edits waiting for an acknowledgement;
+existing settings acknowledgements report apply failures. The CoT bridge also
+reads the phone callsign when constructing messages rather than caching it at
+plugin startup. Live watch updates require WearOS support for these three commands;
+older watches ignore unknown commands and retain reconnect-time identity sync.
+
 WEARTAK-271: Bond/Configure Single Watch BLE scan and selected rows show five
 alphabetically ordered labeled lines:
 

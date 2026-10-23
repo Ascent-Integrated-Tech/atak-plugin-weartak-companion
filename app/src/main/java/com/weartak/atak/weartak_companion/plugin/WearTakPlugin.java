@@ -37,6 +37,7 @@ import com.atakmap.android.ipc.AtakBroadcast;
 import com.atakmap.comms.CotServiceRemote;
 import com.atakmap.coremap.cot.event.CotEvent;
 import com.atakmap.android.maps.Marker;
+import com.atakmap.android.preference.AtakPreferences;
 import com.atakmap.android.missionpackage.api.MissionPackageApi;
 import com.atakmap.android.missionpackage.api.ToastSaveCallback;
 import com.atakmap.android.missionpackage.file.MissionPackageManifest;
@@ -78,6 +79,13 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile Boolean lastSettingsApplyResult = null;
     private CompanionDiagnosticLogger diagnosticLogger;
     private Button loggingButton;
+    private boolean identityObserverActive;
+    private List<String> lastSentPhoneIdentity;
+    private final Runnable liveIdentityUpdate = this::syncLivePhoneIdentity;
+    private final PhoneIdentityObserver phoneIdentityObserver = new PhoneIdentityObserver(() -> {
+        mainHandler.removeCallbacks(liveIdentityUpdate);
+        mainHandler.post(liveIdentityUpdate);
+    });
 
     private WearTakBleClient bleClient;
     private SystemBondedWatchConnection systemBondedConnection;
@@ -572,6 +580,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
 
         initializeDiagnosticLogger();
+        identityObserverActive = true;
+        MapView identityMap = MapView.getMapView();
+        phoneIdentityObserver.start(AtakPreferences.getInstance(identityMap.getContext()).getSharedPrefs(),
+                identityMap.getSelfMarker());
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
         SharedPreferences prefs = systemBondedPreferences();
         setupPurpose = prefs.getBoolean("setup_purpose", false);
@@ -817,7 +829,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         lastSettingsApplyResult = ok;
                         mainHandler.post(() -> {
                             if (!connectionModes.isCurrent(token) || !settingsSession.isCurrent(settingsToken)) return;
-                            if (!ok) phoneSettingsPushedThisConnection = false;
+                            if (!ok) {
+                                phoneSettingsPushedThisConnection = false;
+                            }
                             if (settingsStatusTV != null) {
                                 settingsStatusTV.setText(ok
                                         ? "Settings validated and saved on watch; server connection not yet verified."
@@ -1204,6 +1218,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             LogX.i(TAG, "Watch phone management confirmed by acknowledgement and settings snapshot");
             if (settingsStatusTV != null) settingsStatusTV.setText("Phone management confirmed on watch.");
             phoneSettingsRetryJson = null;
+            mainHandler.post(liveIdentityUpdate);
         }
         setConnectionStatus("CONNECTED");
         updateSystemBondedControl();
@@ -1472,6 +1487,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     @Override
     public void onStop() {
         runOnMain(() -> {
+            identityObserverActive = false;
+            phoneIdentityObserver.stop();
+            mainHandler.removeCallbacks(liveIdentityUpdate);
             simulatorDiagnostics.stop();
             configureWatchChatEchoSuppression(false);
             connectionModes.stop();
@@ -2626,10 +2644,55 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (phoneSettingsHandshake.isPending()) phoneSettingsRetryJson = jsonLine;
         lastSettingsApplyResult = null;
         boolean ok = bleClient.writeJsonLineToWatch(jsonLine);
+        if (ok && phoneManagedSettingsRequested) {
+            JSONObject sent = root.optJSONObject("payload");
+            lastSentPhoneIdentity = java.util.Arrays.asList(sent.optString("callsign"),
+                    sent.optString("team"), sent.optString("role"));
+        }
         if (settingsStatusTV != null) {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
         return ok;
+    }
+
+    private void syncLivePhoneIdentity() {
+        if (!identityObserverActive) return;
+        updatePhoneIdentityViews();
+        refreshIdentityStatus();
+        WearTakBleClient owner = bleClient;
+        long readySession = owner == null ? -1 : owner.getReadySession();
+        if (setupPurpose || gatewayPurpose || !phoneManagedSettingsRequested
+                || connectionModes.getMode() == ConnectionModeController.Mode.GARMIN
+                || managementRelease.isPending() || phoneSettingsHandshake.isPending()
+                || phoneSettingsHandshake.isFailed() || !settingsSession.canSend()
+                || readySession < 0) return;
+        List<String> identity = java.util.Arrays.asList(getPhoneCallsign(), getPhoneTeam(), getPhoneRole());
+        if (identity.equals(lastSentPhoneIdentity)) return;
+        try {
+            List<JSONObject> commands = SettingsPayloadBuilder.identityChanges(lastSentPhoneIdentity,
+                    identity.get(0), identity.get(1), identity.get(2));
+            lastSentPhoneIdentity = lastSentPhoneIdentity == null
+                    ? new ArrayList<>(java.util.Collections.nCopies(3, null))
+                    : new ArrayList<>(lastSentPhoneIdentity);
+            String[] keys = {"callsign", "team", "role"};
+            for (JSONObject envelope : commands) {
+                if (!owner.writeJsonLineToWatch(envelope.toString(), readySession)) {
+                    LogX.e(TAG, "Live phone identity sync could not queue " + envelope.optString("msg_type"));
+                    if (settingsStatusTV != null) settingsStatusTV.setText("Failed to send updated phone identity.");
+                    return;
+                }
+                JSONObject payload = envelope.getJSONObject("payload");
+                for (int i = 0; i < keys.length; i++) {
+                    if (payload.has(keys[i])) lastSentPhoneIdentity.set(i, identity.get(i));
+                }
+            }
+            desiredWatchCallsign = identity.get(0);
+            lastSettingsApplyResult = null;
+            if (settingsStatusTV != null) settingsStatusTV.setText("Sending updated phone identity to watch...");
+        } catch (JSONException | IllegalArgumentException error) {
+            LogX.e(TAG, "Cannot build live phone identity settings", error);
+            if (settingsStatusTV != null) settingsStatusTV.setText("Failed to build updated phone identity settings.");
+        }
     }
 
     private boolean sendSettingsToGarminWatch() {
@@ -2881,7 +2944,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (phoneManagedSettingsDescription == null) return;
         boolean garminMode = connectionModes.getMode() == ConnectionModeController.Mode.GARMIN;
         phoneManagedSettingsDescription.setText(phoneManagedSettingsRequested
-                ? "Use this phone's ATAK callsign, team, and role. Identity syncs on reconnect; watch identity controls stay locked until disabled."
+                ? "Use this phone's ATAK callsign, team, and role. Identity "
+                        + (garminMode ? "syncs on reconnect" : "changes sync while connected")
+                        + "; watch identity controls stay locked until disabled."
                 : garminMode
                 ? "Use an independent watch callsign and reporting profile. TAK servers and certificates stay on the phone."
                 : "Use an independent watch callsign. Standalone Setup uploads TAK server settings and a P12; the watch disconnects after settings are applied.");
@@ -3098,6 +3163,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void clearSessionSettings() {
+        lastSentPhoneIdentity = null;
         cancelPhoneSettingsHandshake();
         settingsSession.clear();
         garminSettingsTransaction.cancel();
@@ -3190,6 +3256,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             });
         }
         updateSettingsSendState();
+        mainHandler.post(liveIdentityUpdate);
     }
 
     private void savePreferredDevice(String address, String nameOrNull) {
