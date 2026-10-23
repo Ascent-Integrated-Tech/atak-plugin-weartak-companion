@@ -865,6 +865,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
 
             @Override
+            public void onConnectionProgress(String message) {
+                runOnMain(() -> {
+                    if (!connectionModes.isCurrent(token)) return;
+                    if (connectionStatusTV != null && !bleClient.isConnected()) {
+                        setConnectionStatus("BLE: " + message);
+                    }
+                });
+            }
+
+            @Override
             public void onError(String msg) {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;

@@ -54,6 +54,16 @@ bounded close/retry behaviour above. An unbonded peer still fails closed.
 This recovery does not address the separate, unproven service-disable case ("Case A");
 watch enablement, managed-configuration policy and service lifecycle are unchanged.
 
+A user-initiated Traditional BLE Connect whose link never comes up (GATT status
+133, 8, 62 or 147 before STATE_CONNECTED) is retried automatically on the same,
+still-bonded address at most twice, after 1 s and then 2 s, closing the old GATT
+first. The pane shows "Retrying connection (n/2)…"; only the final failure is
+reported as an error. Disconnect, Scan, a new Connect, stop, Bluetooth off, trust
+or bond loss, and any session reset cancel a pending retry. Failures after the link
+came up, other statuses, Samsung-owned connects and automatic reconnects are not
+retried here. A new GATT connection waits 1 s after a previous GATT close and
+300 ms after an active scan stops.
+
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no
 different watch is selected by name. Scan results still require a live A11A
