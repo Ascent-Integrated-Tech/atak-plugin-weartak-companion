@@ -301,6 +301,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (card == null || d == null) return;
 
         TextView name = card.findViewById(R.id.deviceName);
+        TextView bondedName = card.findViewById(R.id.deviceBondedName);
         TextView mac = card.findViewById(R.id.deviceMac);
         TextView rssi = card.findViewById(R.id.rssiBadge);
         TextView state = card.findViewById(R.id.deviceState);
@@ -311,7 +312,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
         // Defensive: if you haven't updated item_ble_device.xml yet,
         // disconnectButton may not exist. Fail softly.
-        if (name != null) name.setText((d.name != null && !d.name.isEmpty()) ? d.name : "Unknown");
+        if (name != null && bondedName != null) BleDeviceAdapter.bindNames(name, bondedName, d);
         if (mac != null) mac.setText(d.address != null ? d.address : "—");
         if (rssi != null) rssi.setText(""); // avoid stale RSSI; can show last known if you want
         if (state != null) state.setText(managementRelease.isPending()

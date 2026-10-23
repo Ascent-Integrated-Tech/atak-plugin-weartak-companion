@@ -2,6 +2,8 @@
 <resources>
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
+    <string name="watch_name_unavailable">Unknown watch</string>
+    <string name="watch_bonded_as">Bonded as %1$s</string>
     <!-- description -->
     <string name="system_bonded_watch_toggle">Use Samsung Wearable Bond</string>
     <string name="system_bonded_watch_checking">Samsung Wearable use disabled; checking for a compatible already bonded watch…</string>

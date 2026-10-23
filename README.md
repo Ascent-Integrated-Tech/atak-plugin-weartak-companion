@@ -64,6 +64,14 @@ came up, other statuses, Samsung-owned connects and automatic reconnects are not
 retried here. A new GATT connection waits 1 s after a previous GATT close and
 300 ms after an active scan stops.
 
+The BLE picker preserves the advertised watch name verbatim, including hyphens
+and any `WT-` prefix. A different Android bonded alias is shown beneath it as
+"Bonded as ..."; Android's cached device name supplies that context if no alias
+is available. If a bonded watch has no observed advertised name in the current
+scan, the primary label is "Unknown watch", not a guessed pre-bond name. A nameless
+packet retains an earlier advertisement for the same address within that scan.
+Names are display context only; device selection and trust remain address-based.
+
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no
 different watch is selected by name. Scan results still require a live A11A

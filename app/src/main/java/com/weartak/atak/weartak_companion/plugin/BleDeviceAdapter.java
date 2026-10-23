@@ -77,8 +77,7 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     public void onBindViewHolder(@NonNull VH h, int position) {
         WearTakBleClient.DiscoveredDevice d = items.get(position);
 
-        String name = (d.name != null && !d.name.isEmpty()) ? d.name : "Unknown";
-        h.deviceName.setText(name);
+        bindNames(h.deviceName, h.bondedName, d);
         h.deviceMac.setText(d.address);
         h.rssiBadge.setText(d.rssi + " dBm");
 
@@ -119,14 +118,25 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
         return items.size();
     }
 
+    static void bindNames(TextView name, TextView bondedName,
+                          WearTakBleClient.DiscoveredDevice device) {
+        name.setText(device.name != null && !device.name.isEmpty() ? device.name
+                : name.getResources().getString(R.string.watch_name_unavailable));
+        String alias = device.distinctBondedName();
+        bondedName.setText(alias == null ? ""
+                : bondedName.getResources().getString(R.string.watch_bonded_as, alias));
+        bondedName.setVisibility(alias == null ? View.GONE : View.VISIBLE);
+    }
+
     static class VH extends RecyclerView.ViewHolder {
-        TextView deviceName, deviceMac, rssiBadge, deviceState;
+        TextView deviceName, bondedName, deviceMac, rssiBadge, deviceState;
         Button actionButton;
         View settingsButton;
 
         VH(@NonNull View itemView) {
             super(itemView);
             deviceName = itemView.findViewById(R.id.deviceName);
+            bondedName = itemView.findViewById(R.id.deviceBondedName);
             deviceMac = itemView.findViewById(R.id.deviceMac);
             rssiBadge = itemView.findViewById(R.id.rssiBadge);
             deviceState = itemView.findViewById(R.id.deviceState);
