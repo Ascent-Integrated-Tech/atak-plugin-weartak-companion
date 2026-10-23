@@ -84,6 +84,14 @@ erase it. A present empty, invalid or unsupported payload clears that address's
 advertised callsign; a new valid payload replaces it. Scan, selected, bonded and
 gateway watch labels use this identity, with the address still shown separately.
 No Bluetooth name or system settings are changed; advertised labels do not prove trust.
+WEARTAK-270: During an active scan, results not seen for 10 seconds expire, checked
+once per second using monotonic elapsed time, including when no new results arrive.
+Seeing the same address refreshes its existing row and RSSI rather than adding a row.
+Different addresses remain separate even if callsigns or truncated labels match:
+private-address rotation cannot safely prove that two advertisements are one watch.
+Scan completion supplies a final fresh snapshot; after scanning stops, that snapshot
+is not a live reachability indicator. Expiry affects scan choices only, not selected/
+connected peers, bonds, reconnect targets or the address-keyed callsign cache.
 After handshake, an observed full callsign is primary, with the available advertised/
 remote device label and distinct bonded alias below it. Duplicate fields are
 omitted. Callsigns are bound to the ready peer address and session generation;
