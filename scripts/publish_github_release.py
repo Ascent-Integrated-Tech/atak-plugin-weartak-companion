@@ -25,6 +25,7 @@ EXPECTED_GITHUB_REPOSITORY = "Ascent-Integrated-Tech/atak-plugin-weartak-compani
 RELEASE_TAG = "tak-gov-ci-cd-pipeline"
 RELEASE_TITLE = "TAK.gov CI/CD Pipeline Release"
 ASSET_PREFIX = "WearTAK-ATAK-Plugin-civ-release-pipeline-"
+VERSIONED_ASSET_PREFIX = "WearTAK-Companion-"
 RELEASE_OWNERSHIP_MARKER = "<!-- weartak-companion-rolling-release:managed -->"
 RELEASE_END_MARKER = "<!-- /weartak-companion-rolling-release:managed -->"
 RELEASE_TITLE_PREFIX = "TAK.gov Forge CI/CD Pipeline Release"
@@ -487,13 +488,15 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
     apk_bytes = apk.read_bytes()
     checksum = hashlib.sha256(apk_bytes).hexdigest()
     pipeline_id = env["CI_PIPELINE_ID"]
-    asset_name = f"{ASSET_PREFIX}{pipeline_id}.apk"
     plugin_version = read_plugin_version(apk)
     version_name, version_code = read_apk_metadata(apk)
     pipeline_iid = env.get("CI_PIPELINE_IID")
-    if pipeline_iid is not None and not re.fullmatch(r"[0-9]+", pipeline_iid):
+    if pipeline_iid is None or not re.fullmatch(r"[0-9]+", pipeline_iid):
         raise PublishError("CI_PIPELINE_IID must be numeric")
-    title = f"{RELEASE_TITLE_PREFIX} ({plugin_version}-p{pipeline_iid or pipeline_id})"
+    if not re.match(re.escape(plugin_version) + r"(?:\s|$)", version_name):
+        raise PublishError("APK manifest version does not match its distributable version")
+    asset_name = f"{VERSIONED_ASSET_PREFIX}{plugin_version}-p{pipeline_iid}.apk"
+    title = f"{RELEASE_TITLE_PREFIX} ({plugin_version}-p{pipeline_iid})"
 
     if release is None:
         release = github.create_release()
@@ -508,6 +511,12 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
     release_id = int(release["id"])
     assets = github.list_assets(release_id)
     current_asset = next((asset for asset in assets if asset.get("name") == asset_name), None)
+    if current_asset is None:
+        legacy_name = f"{ASSET_PREFIX}{pipeline_id}.apk"
+        current_asset = next((asset for asset in assets if asset.get("name") == legacy_name), None)
+        if current_asset is not None:
+            # Retrying an old pipeline must preserve its already-linked download URL.
+            asset_name = legacy_name
     asset_label = ASSET_DISPLAY_LABEL
     if current_asset is not None:
         if managed_asset_checksum(current_asset) != checksum:
@@ -540,7 +549,9 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
     github.update_release_body(release_id, description, title)
     github.dispatch_release_test(release_id, pipeline_id, description)
 
-    managed_asset = re.compile(re.escape(ASSET_PREFIX) + r"[0-9]+\.apk\Z")
+    managed_asset = re.compile(
+        re.escape(VERSIONED_ASSET_PREFIX) + r"[0-9]+(?:\.[0-9]+)+-p[0-9]+\.apk\Z"
+    )
     if previous_release_owned:
         for asset in assets:
             if asset.get("id") == current_asset.get("id"):

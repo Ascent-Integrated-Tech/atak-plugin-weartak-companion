@@ -115,6 +115,7 @@ def make_env(directory: Path, pipeline_id: str = "100") -> dict[str, str]:
         "CI_COMMIT_BRANCH": publisher.EXPECTED_BRANCH,
         "CI_PIPELINE_SOURCE": "push",
         "CI_PIPELINE_ID": pipeline_id,
+        "CI_PIPELINE_IID": pipeline_id,
         "CI_COMMIT_SHA": "a" * 40,
         "CI_API_V4_URL": "https://git.tak.gov/api/v4",
         "CI_JOB_TOKEN": "not-a-real-job-token",
@@ -141,10 +142,12 @@ def make_gitlab(env: dict[str, str]) -> FakeGitLab:
     )
 
 
-def make_owned_asset(asset_id: int, pipeline_id: str, content: bytes = b"old package") -> dict[str, Any]:
+def make_owned_asset(asset_id: int, pipeline_id: str, content: bytes = b"old package",
+                     legacy: bool = False) -> dict[str, Any]:
     return {
         "id": asset_id,
-        "name": publisher.ASSET_PREFIX + pipeline_id + ".apk",
+        "name": (publisher.ASSET_PREFIX + pipeline_id + ".apk" if legacy else
+                 publisher.VERSIONED_ASSET_PREFIX + "5.6.0-p" + pipeline_id + ".apk"),
         "label": publisher.ASSET_LABEL_PREFIX + hashlib.sha256(content).hexdigest(),
         "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
         "browser_download_url": f"https://github.com/example/{pipeline_id}.apk",
@@ -192,7 +195,7 @@ class RollingReleaseTests(unittest.TestCase):
         with patch.object(publisher, "verify_signer"):
             asset_name = publisher.publish(self.env, self.gitlab, github)
 
-        self.assertEqual(asset_name, publisher.ASSET_PREFIX + "100.apk")
+        self.assertEqual(asset_name, publisher.VERSIONED_ASSET_PREFIX + "5.6.0-p100.apk")
         self.assertEqual(list(github.uploaded), [asset_name])
         self.assertFalse(github.release["draft"])
         self.assertFalse(github.release["prerelease"])
@@ -417,7 +420,7 @@ class RollingReleaseTests(unittest.TestCase):
 
     def test_legacy_same_pipeline_asset_is_relabeled_without_reupload(self) -> None:
         content = next(self.directory.glob("*.apk")).read_bytes()
-        asset = make_owned_asset(1, "100", content)
+        asset = make_owned_asset(1, "100", content, legacy=True)
         github = FakeGitHub([asset])
         github.create_release()
         with patch.object(publisher, "verify_signer"):
@@ -432,9 +435,9 @@ class RollingReleaseTests(unittest.TestCase):
         good = make_owned_asset(1, "97")
         good["label"] = publisher.ASSET_DISPLAY_LABEL
         good["digest"] = "sha256:" + hashlib.sha256(b"old package").hexdigest()
-        missing = dict(good, id=2, name=publisher.ASSET_PREFIX + "98.apk")
+        missing = dict(good, id=2, name=publisher.VERSIONED_ASSET_PREFIX + "5.6.0-p98.apk")
         missing.pop("digest")
-        tampered = dict(good, id=3, name=publisher.ASSET_PREFIX + "99.apk", _content=b"tampered")
+        tampered = dict(good, id=3, name=publisher.VERSIONED_ASSET_PREFIX + "5.6.0-p99.apk", _content=b"tampered")
         github = FakeGitHub([good, missing, tampered])
         github.create_release()
         github.release["body"] = publisher.RELEASE_OWNERSHIP_MARKER
@@ -508,6 +511,49 @@ class RollingReleaseTests(unittest.TestCase):
                 publisher.publish(self.env, self.gitlab, github)
         self.assertEqual(github.deleted, [])
         self.assertEqual(github.uploaded, {})
+
+    def test_filename_uses_manifest_checked_version_and_project_iid(self) -> None:
+        self.env["CI_PIPELINE_IID"] = "27"
+        github = FakeGitHub()
+        with patch.object(publisher, "verify_signer"):
+            name = publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(name, "WearTAK-Companion-5.6.0-p27.apk")
+        self.assertIn(name, github.body)
+        self.assertEqual(github.assets[0]["label"], publisher.ASSET_DISPLAY_LABEL)
+
+    def test_missing_iid_or_mismatched_manifest_version_fails_before_upload(self) -> None:
+        github = FakeGitHub()
+        self.env.pop("CI_PIPELINE_IID")
+        with patch.object(publisher, "verify_signer"):
+            with self.assertRaisesRegex(publisher.PublishError, "CI_PIPELINE_IID"):
+                publisher.publish(self.env, self.gitlab, github)
+            self.env["CI_PIPELINE_IID"] = "27"
+            with patch.object(publisher, "read_apk_metadata", return_value=("9.9.9", "123")):
+                with self.assertRaisesRegex(publisher.PublishError, "manifest version"):
+                    publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(github.uploaded, {})
+
+    def test_previously_linked_legacy_asset_is_not_cleaned_up(self) -> None:
+        legacy = make_owned_asset(1, "99", legacy=True)
+        github = FakeGitHub([legacy])
+        github.create_release()
+        github.release["body"] = publisher.RELEASE_OWNERSHIP_MARKER
+        with patch.object(publisher, "verify_signer"):
+            publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(github.deleted, [])
+        self.assertIn(legacy, github.assets)
+
+    def test_same_iid_different_bytes_are_never_replaced(self) -> None:
+        github = FakeGitHub()
+        with patch.object(publisher, "verify_signer"):
+            publisher.publish(self.env, self.gitlab, github)
+            original = dict(github.uploaded)
+            next(self.directory.glob("*.apk")).write_bytes(b"changed APK")
+            with patch.object(publisher, "select_signed_apk", return_value=next(self.directory.glob("*.apk"))):
+                with self.assertRaisesRegex(publisher.PublishError, "not marked as publisher-owned"):
+                    publisher.publish(self.env, self.gitlab, github)
+        self.assertEqual(github.uploaded, original)
+        self.assertEqual(github.deleted, [])
 
 
 if __name__ == "__main__":
