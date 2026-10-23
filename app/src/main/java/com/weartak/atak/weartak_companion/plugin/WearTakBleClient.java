@@ -29,6 +29,7 @@ import androidx.core.app.ActivityCompat;
 
 import org.json.JSONObject;
 
+import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -951,10 +952,12 @@ public class WearTakBleClient {
             pendingBondDevice = device;
             boolean bondStarted;
             try {
-                bondStarted = remote.createBond();
-            } catch (SecurityException e) {
+                bondStarted = invokeLeBond(remote);
+            } catch (ReflectiveOperationException | SecurityException | LinkageError e) {
                 pendingBondDevice = null;
-                error("Unable to start BLE pairing: " + e.getMessage());
+                Throwable cause = e instanceof InvocationTargetException ? e.getCause() : e;
+                error("Unable to start LE-only pairing: " + cause
+                        + ". Android must allow createBond(TRANSPORT_LE); AUTO/Classic pairing was not attempted.");
                 return;
             }
             if (!bondStarted && !isBonded(remote)) {
@@ -963,7 +966,7 @@ public class WearTakBleClient {
                 return;
             }
             if (bondStarted) {
-                logI("Bonding started for " + device.address + "; waiting for BOND_BONDED");
+                logI("LE bonding started for " + device.address + "; waiting for BOND_BONDED");
                 return;
             }
         } else {
@@ -984,6 +987,12 @@ public class WearTakBleClient {
         } else {
             connectGattNow(device);
         }
+    }
+
+    static boolean invokeLeBond(Object device) throws ReflectiveOperationException {
+        // The public no-argument API chooses AUTO, which can page an LE-only private address over Classic.
+        return (Boolean) device.getClass().getMethod("createBond", int.class)
+                .invoke(device, BluetoothDevice.TRANSPORT_LE);
     }
 
     private synchronized void connectGattNow(DiscoveredDevice device) {

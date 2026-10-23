@@ -92,6 +92,17 @@ came up, other statuses, Samsung-owned connects and automatic reconnects are not
 retried here. A new GATT connection waits 1 s after a previous GATT close and
 300 ms after an active scan stops.
 
+WEARTAK-275: New Companion watch bonds explicitly request `TRANSPORT_LE` using
+Android's non-SDK `createBond(int)` overload. The public no-argument
+`createBond()` selects AUTO and can incorrectly attempt Classic paging of a
+watch's LE-only private address. If Android hides/blocks the LE overload, rejects
+the request, or denies permission, pairing reports an error; it never falls back
+to AUTO/Classic. A successful request still waits for `BOND_BONDED` before GATT
+setup. Existing bonds are reused without requesting another bond, and all GATT
+connections continue to use `TRANSPORT_LE`. Samsung-owned connects still require
+an existing system bond. This does not bypass pairing confirmation or repair an
+independent SMP confirmation timeout.
+
 WEARTAK-271: Bond/Configure Single Watch BLE scan and selected rows show five
 alphabetically ordered labeled lines:
 

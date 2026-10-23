@@ -37,6 +37,9 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
 
 /** Drives user-initiated Traditional connects through the production client, adapter and GATT callback. */
 public class BleConnectRetryTest {
@@ -59,6 +62,18 @@ public class BleConnectRetryTest {
     private WearTakBleClient client;
     private BluetoothGattCallback callback;
     private BluetoothGattDescriptor lastCccd;
+    private BluetoothDevice device;
+    private BluetoothAdapter adapter;
+
+    public static final class LeBondApi {
+        int transport = -1;
+        boolean accepted;
+        public boolean createBond(int transport) {
+            this.transport = transport;
+            if (!accepted) throw new SecurityException("denied");
+            return true;
+        }
+    }
 
     @Before public void createStartedTraditionalClient() throws Exception {
         HostContext context = new HostContext();
@@ -80,7 +95,7 @@ public class BleConnectRetryTest {
         doAnswer(i -> { posted.clear(); delayed.clear(); delays.clear(); return null; })
                 .when(main).removeCallbacksAndMessages(any());
 
-        BluetoothDevice device = mock(BluetoothDevice.class);
+        device = mock(BluetoothDevice.class);
         when(device.getAddress()).thenReturn(WATCH);
         when(device.getBondState()).thenAnswer(i -> bond);
         when(device.connectGatt(any(Context.class), anyBoolean(), any(BluetoothGattCallback.class), anyInt()))
@@ -89,7 +104,7 @@ public class BleConnectRetryTest {
                     gatts.add(gatt);
                     return gatt;
                 });
-        BluetoothAdapter adapter = mock(BluetoothAdapter.class, withSettings().mockMaker(MockMakers.INLINE));
+        adapter = mock(BluetoothAdapter.class, withSettings().mockMaker(MockMakers.INLINE));
         when(adapter.isEnabled()).thenReturn(true);
         when(adapter.getRemoteDevice(anyString())).thenReturn(device);
 
@@ -100,6 +115,63 @@ public class BleConnectRetryTest {
         client.setAutomaticReconnectAllowed(true); // Traditional BLE mode
         client.setJsonListener(new Listener());
         callback = (BluetoothGattCallback) get("gattCallback");
+    }
+
+    @Test public void reflectiveBondRequestsOnlyLe() throws Exception {
+        LeBondApi peer = new LeBondApi();
+        peer.accepted = true;
+        assertTrue(WearTakBleClient.invokeLeBond(peer));
+        assertEquals(BluetoothDevice.TRANSPORT_LE, peer.transport);
+    }
+
+    public static final class RejectedLeBondApi {
+        public boolean createBond(int transport) {
+            assertEquals(BluetoothDevice.TRANSPORT_LE, transport);
+            return false;
+        }
+    }
+
+    @Test public void reflectiveBondPreservesRejectedResult() throws Exception {
+        assertFalse(WearTakBleClient.invokeLeBond(new RejectedLeBondApi()));
+    }
+
+    @Test public void unavailableLeOverloadFailsWithoutAutoFallback() throws Exception {
+        bond = BluetoothDevice.BOND_NONE; // SDK mock intentionally has no hidden overload.
+        userConnect();
+        verify(device, never()).createBond();
+        assertNull(get("pendingBondDevice"));
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0).contains("AUTO/Classic pairing was not attempted"));
+        assertTrue(gatts.isEmpty());
+    }
+
+    @Test public void reflectiveBondPropagatesPermissionFailure() throws Exception {
+        LeBondApi peer = new LeBondApi();
+        try {
+            WearTakBleClient.invokeLeBond(peer);
+            org.junit.Assert.fail("Permission denial must propagate");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            assertTrue(e.getCause() instanceof SecurityException);
+        }
+        assertEquals(BluetoothDevice.TRANSPORT_LE, peer.transport);
+    }
+
+    @Test public void existingBondConnectsOverLeWithoutRequestingBond() {
+        userConnect();
+        verify(device, never()).createBond();
+        verify(device).connectGatt(any(), eq(false), any(), eq(BluetoothDevice.TRANSPORT_LE));
+        assertEquals(1, gatts.size());
+        assertTrue(errors.isEmpty());
+    }
+
+    @Test public void samsungOwnedConnectNeverCreatesMissingBond() throws Exception {
+        bond = BluetoothDevice.BOND_NONE;
+        client.connectToSelectedDevice(new WearTakBleClient.DiscoveredDevice("w", WATCH, -50), false);
+        settle();
+        verify(device, never()).createBond();
+        assertNull(get("pendingBondDevice"));
+        assertEquals(1, errors.size());
+        assertTrue(gatts.isEmpty());
     }
 
     @Test public void transient133ThenSuccessBecomesReadyWithoutError() throws Exception {
