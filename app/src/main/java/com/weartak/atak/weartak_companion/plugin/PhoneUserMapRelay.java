@@ -32,6 +32,7 @@ final class PhoneUserMapRelay {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Transport transport;
     private final PhoneUserRelay policy = new PhoneUserRelay();
+    private final PhoneUserRelay.LifetimeWarnings lifetimeWarnings = new PhoneUserRelay.LifetimeWarnings();
     private final Set<Marker> observed = new LinkedHashSet<>();
     private final Set<MapItem> dirty = new LinkedHashSet<>();
     private final Map<String, PhoneUserRelay.User> pending = new LinkedHashMap<>();
@@ -75,6 +76,7 @@ final class PhoneUserMapRelay {
         }
         for (Marker marker : new ArrayList<>(observed)) unobserve(marker);
         pending.clear();
+        lifetimeWarnings.clear();
         synchronized (dirty) { dirty.clear(); }
         session = -1;
         watchUid = null;
@@ -112,6 +114,7 @@ final class PhoneUserMapRelay {
 
     private void unobserve(Marker marker) {
         observed.remove(marker);
+        lifetimeWarnings.remove(marker.getUID());
         marker.removeOnPointChangedListener(points);
         MetadataObservers.remove(marker, metadata);
         marker.removeOnTypeChangedListener(types);
@@ -171,9 +174,12 @@ final class PhoneUserMapRelay {
         long updated = marker.getMetaLong("lastUpdateTime", 0);
         long duration = marker.getMetaLong("autoStaleDuration", 0);
         if (updated <= 0 || duration <= 0 || updated > Long.MAX_VALUE - duration) {
-            LogX.w(TAG, "User not relayed: no valid source lifetime uid=" + marker.getUID());
+            if (lifetimeWarnings.shouldReport(marker.getUID(), android.os.SystemClock.elapsedRealtime())) {
+                LogX.w(TAG, "User not relayed: no valid source lifetime uid=" + marker.getUID());
+            }
             return null;
         }
+        lifetimeWarnings.remove(marker.getUID());
         event.setTime(new CoordinatedTime(updated));
         event.setStart(new CoordinatedTime(updated));
         event.setStale(new CoordinatedTime(updated + duration));

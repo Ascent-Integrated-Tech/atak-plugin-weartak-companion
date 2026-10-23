@@ -99,8 +99,7 @@ final class PhoneMarkerRelay {
     }
 
     static boolean supportedType(String type) {
-        return "a-f-G".equals(type) || "a-u-G".equals(type) || "a-h-G".equals(type)
-                || "a-n-G".equals(type) || "b-m-p-s-p-i".equals(type);
+        return type != null && (type.startsWith("a-") || "b-m-p-s-p-i".equals(type));
     }
 
     synchronized void watchImportStarted(String uid, long now) {
