@@ -13,7 +13,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
@@ -92,13 +91,13 @@ final class PhoneGnssDiagnostics {
             if (!gpsEnabled) payload.put("error", "GNSS provider disabled");
         } catch (JSONException error) {
             setUnavailable("Unable to record GNSS provider status");
-            Log.e(TAG, "Unable to record location provider status", error);
+            LogX.e(TAG, "Unable to record location provider status", error);
         } catch (SecurityException error) {
             setUnavailable("Location permission denied while checking provider");
-            Log.w(TAG, "Unable to check location provider", error);
+            LogX.w(TAG, "Unable to check location provider", error);
         } catch (RuntimeException error) {
             setUnavailable("Location provider status unavailable");
-            Log.w(TAG, "Unable to check location provider", error);
+            LogX.w(TAG, "Unable to check location provider", error);
         }
 
         if (hasFine) registerGnssCallbacks();
@@ -108,7 +107,7 @@ final class PhoneGnssDiagnostics {
                         .put("measurementsSupported", false)
                         .put("error", "Fine location permission required for GNSS diagnostics");
             } catch (JSONException error) {
-                Log.e(TAG, "Unable to record permission status", error);
+                LogX.e(TAG, "Unable to record permission status", error);
             }
         }
         registerPassiveFixListener();
@@ -133,21 +132,21 @@ final class PhoneGnssDiagnostics {
                 try {
                     locationManager.removeUpdates(passiveFixListener);
                 } catch (RuntimeException error) {
-                    Log.w(TAG, "Unable to remove passive location observer", error);
+                    LogX.w(TAG, "Unable to remove passive location observer", error);
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && statusCallback != null) {
                 try {
                     locationManager.unregisterGnssStatusCallback(statusCallback);
                 } catch (RuntimeException error) {
-                    Log.w(TAG, "Unable to remove GNSS status observer", error);
+                    LogX.w(TAG, "Unable to remove GNSS status observer", error);
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && measurementsCallback != null) {
                 try {
                     locationManager.unregisterGnssMeasurementsCallback(measurementsCallback);
                 } catch (RuntimeException error) {
-                    Log.w(TAG, "Unable to remove GNSS measurement observer", error);
+                    LogX.w(TAG, "Unable to remove GNSS measurement observer", error);
                 }
             }
         }
@@ -173,7 +172,7 @@ final class PhoneGnssDiagnostics {
         try {
             return new JSONObject(payload.toString());
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to copy GNSS diagnostic state", error);
+            LogX.e(TAG, "Unable to copy GNSS diagnostic state", error);
             return new JSONObject();
         }
     }
@@ -199,7 +198,7 @@ final class PhoneGnssDiagnostics {
                     updateSatellitePayload();
                     publish(false);
                 } catch (JSONException error) {
-                    Log.e(TAG, "Unable to serialize observed location quality", error);
+                    LogX.e(TAG, "Unable to serialize observed location quality", error);
                 }
             }
             @Override public void onProviderEnabled(String provider) {
@@ -216,10 +215,10 @@ final class PhoneGnssDiagnostics {
                     passiveFixListener, Looper.getMainLooper());
         } catch (SecurityException error) {
             setUnavailable("Location permission denied for passive observation");
-            Log.w(TAG, "Passive location observation denied", error);
+            LogX.w(TAG, "Passive location observation denied", error);
         } catch (RuntimeException error) {
             setUnavailable("Passive location provider unavailable");
-            Log.w(TAG, "Passive location observer unavailable", error);
+            LogX.w(TAG, "Passive location observer unavailable", error);
         }
     }
 
@@ -229,7 +228,7 @@ final class PhoneGnssDiagnostics {
                 payload.put("satelliteStatusSupported", false)
                         .put("measurementsSupported", false);
             } catch (JSONException error) {
-                Log.e(TAG, "Unable to record GNSS API support", error);
+                LogX.e(TAG, "Unable to record GNSS API support", error);
             }
             return;
         }
@@ -261,14 +260,14 @@ final class PhoneGnssDiagnostics {
             payload.put("satelliteStatusSupported", true);
         } catch (SecurityException error) {
             setUnavailable("GNSS status permission denied");
-            Log.w(TAG, "GNSS status observation denied", error);
+            LogX.w(TAG, "GNSS status observation denied", error);
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to record GNSS status support", error);
+            LogX.e(TAG, "Unable to record GNSS status support", error);
         } catch (RuntimeException error) {
             try { payload.put("satelliteStatusSupported", false); }
             catch (JSONException ignored) { }
             setUnavailable("GNSS status callback unavailable");
-            Log.w(TAG, "GNSS status callback unavailable", error);
+            LogX.w(TAG, "GNSS status callback unavailable", error);
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -293,13 +292,13 @@ final class PhoneGnssDiagnostics {
                             updateSatellitePayload();
                             publish(false);
                         } catch (JSONException error) {
-                            Log.e(TAG, "Unable to record measurement status", error);
+                            LogX.e(TAG, "Unable to record measurement status", error);
                         }
                     }
                     @Override public void onStatusChanged(int status) {
                         if (status == GnssMeasurementsEvent.Callback.STATUS_NOT_SUPPORTED) {
                             try { payload.put("measurementsSupported", false); }
-                            catch (JSONException error) { Log.e(TAG, "Unable to record GNSS support status", error); }
+                            catch (JSONException error) { LogX.e(TAG, "Unable to record GNSS support status", error); }
                             publish(false);
                         }
                     }
@@ -307,19 +306,19 @@ final class PhoneGnssDiagnostics {
                 locationManager.registerGnssMeasurementsCallback(measurementsCallback, handler);
                 payload.put("measurementsSupported", true);
             } catch (JSONException error) {
-                Log.e(TAG, "Unable to record raw GNSS support", error);
+                LogX.e(TAG, "Unable to record raw GNSS support", error);
             } catch (SecurityException error) {
                 try { payload.put("measurementsSupported", false); }
-                catch (JSONException jsonError) { Log.e(TAG, "Unable to record GNSS permission status", jsonError); }
-                Log.w(TAG, "Raw GNSS measurement permission denied", error);
+                catch (JSONException jsonError) { LogX.e(TAG, "Unable to record GNSS permission status", jsonError); }
+                LogX.w(TAG, "Raw GNSS measurement permission denied", error);
             } catch (RuntimeException error) {
                 try { payload.put("measurementsSupported", false); }
-                catch (JSONException jsonError) { Log.e(TAG, "Unable to record GNSS callback status", jsonError); }
-                Log.w(TAG, "Raw GNSS measurement callback unavailable", error);
+                catch (JSONException jsonError) { LogX.e(TAG, "Unable to record GNSS callback status", jsonError); }
+                LogX.w(TAG, "Raw GNSS measurement callback unavailable", error);
             }
         } else {
             try { payload.put("measurementsSupported", false); }
-            catch (JSONException error) { Log.e(TAG, "Unable to record API support status", error); }
+            catch (JSONException error) { LogX.e(TAG, "Unable to record API support status", error); }
         }
     }
 
@@ -341,7 +340,7 @@ final class PhoneGnssDiagnostics {
                     .put("providerAvailable", false)
                     .put("reason", "Waiting for an active GNSS fix");
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to initialize GNSS diagnostics", error);
+            LogX.e(TAG, "Unable to initialize GNSS diagnostics", error);
         }
         return initial;
     }
@@ -354,7 +353,7 @@ final class PhoneGnssDiagnostics {
                     .put("meanCn0DbHz", meanCn0DbHz == null ? JSONObject.NULL : meanCn0DbHz)
                     .put("maxAgcDb", maxAgcDb == null ? JSONObject.NULL : maxAgcDb);
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to update satellite diagnostics", error);
+            LogX.e(TAG, "Unable to update satellite diagnostics", error);
         }
     }
 
@@ -368,7 +367,7 @@ final class PhoneGnssDiagnostics {
             } else payload.put("error", error);
             publish(false);
         } catch (JSONException jsonError) {
-            Log.e(TAG, "Unable to record provider status", jsonError);
+            LogX.e(TAG, "Unable to record provider status", jsonError);
         }
     }
 
@@ -385,7 +384,7 @@ final class PhoneGnssDiagnostics {
             payload.remove("error");
             publish(false);
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to record inactive GNSS state", error);
+            LogX.e(TAG, "Unable to record inactive GNSS state", error);
         }
     }
 
@@ -393,7 +392,7 @@ final class PhoneGnssDiagnostics {
         try {
             payload.put("providerAvailable", false).put("error", reason);
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to record diagnostics error state", error);
+            LogX.e(TAG, "Unable to record diagnostics error state", error);
         }
     }
 
@@ -431,7 +430,7 @@ final class PhoneGnssDiagnostics {
             }
             else payload.put("reason", "Recovery pending; quality remains " + assessedQuality);
         } catch (JSONException error) {
-            Log.e(TAG, "Unable to record conservative quality state", error);
+            LogX.e(TAG, "Unable to record conservative quality state", error);
         }
         if (lastReportMs != 0L && now - lastReportMs < REPORT_INTERVAL_MS) return;
         lastReportMs = now;
@@ -439,7 +438,7 @@ final class PhoneGnssDiagnostics {
             JSONObject envelope = LocationDiagnosticsProtocol.snapshot(session, payload);
             listener.onSnapshot(envelope);
         } catch (JSONException | IllegalArgumentException error) {
-            Log.w(TAG, "Unable to send location diagnostics snapshot", error);
+            LogX.w(TAG, "Unable to send location diagnostics snapshot", error);
         }
     }
 

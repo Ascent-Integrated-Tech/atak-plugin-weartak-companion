@@ -3,7 +3,6 @@ package com.weartak.atak.weartak_companion.plugin;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapItem;
@@ -35,7 +34,7 @@ final class PhoneUserRelayDiagnostics {
 
     void start(MapView view) {
         if (map != null) {
-            Log.w(TAG, "User relay experiment already running");
+            LogX.w(TAG, "User relay experiment already running");
             return;
         }
         map = view;
@@ -61,7 +60,7 @@ final class PhoneUserRelayDiagnostics {
                     try {
                         JSONObject message = new JSONObject(json);
                         messages.add(message);
-                        Log.i(TAG, "Captured " + message.getString("msg_type"));
+                        LogX.i(TAG, "Captured " + message.getString("msg_type"));
                         return true;
                     } catch (JSONException e) {
                         throw new IllegalArgumentException("Invalid user relay envelope", e);
@@ -120,7 +119,7 @@ final class PhoneUserRelayDiagnostics {
 
     private static void check(boolean success, String message) {
         if (!success) throw new IllegalStateException(message);
-        Log.i(TAG, "PASS: " + message);
+        LogX.i(TAG, "PASS: " + message);
     }
 
     private interface Step { void run() throws JSONException; }
@@ -128,7 +127,7 @@ final class PhoneUserRelayDiagnostics {
         try {
             action.run();
         } catch (RuntimeException | JSONException e) {
-            Log.e(TAG, "FAIL: user relay experiment", e);
+            LogX.e(TAG, "FAIL: user relay experiment", e);
             stop();
         }
     }

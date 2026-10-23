@@ -7,8 +7,17 @@ import java.util.Locale;
 
 public final class LogX {
     private LogX() {}
+    private static volatile CompanionDiagnosticLogger diagnostics;
 
-    // Flip this to false to quiet logs without deleting them.
+    static void attach(CompanionDiagnosticLogger logger) {
+        diagnostics = logger;
+    }
+
+    static void detach(CompanionDiagnosticLogger logger) {
+        if (diagnostics == logger) diagnostics = null;
+    }
+
+    // Quiet logcat without disabling a user-requested diagnostic capture.
     public static volatile boolean ENABLED = true;
 
     // Use a stable prefix so Logcat filtering is easy: "WTK/"
@@ -17,23 +26,49 @@ public final class LogX {
     }
 
     public static void d(String tag, String msg) {
+        capture("D", tag, msg, null);
         if (!ENABLED) return;
         Log.d(tag, stamp() + msg);
     }
 
     public static void i(String tag, String msg) {
+        capture("I", tag, msg, null);
         if (!ENABLED) return;
         Log.i(tag, stamp() + msg);
     }
 
     public static void w(String tag, String msg) {
+        capture("W", tag, msg, null);
         if (!ENABLED) return;
         Log.w(tag, stamp() + msg);
     }
 
     public static void e(String tag, String msg, Throwable t) {
+        capture("E", tag, msg, t);
         if (!ENABLED) return;
         Log.e(tag, stamp() + msg, t);
+    }
+
+    public static void w(String tag, String msg, Throwable t) {
+        capture("W", tag, msg, t);
+        if (ENABLED) Log.w(tag, stamp() + msg, t);
+    }
+
+    public static void e(String tag, String msg) {
+        e(tag, msg, null);
+    }
+
+    private static void capture(String level, String tag, String msg, Throwable error) {
+        CompanionDiagnosticLogger target = diagnostics;
+        if (target == null || !target.isLogging()) return;
+        StringBuilder text = new StringBuilder(CompanionDiagnosticLogger.limit(msg, 2048));
+        if (error != null) {
+            text.append('\n').append(CompanionDiagnosticLogger.limit(error.toString(), 512));
+            StackTraceElement[] frames = error.getStackTrace();
+            for (int i = 0; i < Math.min(frames.length, 12); i++)
+                text.append("\n at ").append(CompanionDiagnosticLogger.limit(frames[i].toString(), 256));
+        }
+        target.record(level, tag, text.toString());
     }
 
     private static String stamp() {

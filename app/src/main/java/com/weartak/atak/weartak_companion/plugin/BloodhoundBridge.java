@@ -3,7 +3,6 @@ package com.weartak.atak.weartak_companion.plugin;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.atakmap.android.bloodhound.BloodHoundTool;
@@ -83,7 +82,7 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
             receive(env, type);
             return true;
         } catch (JSONException e) {
-            Log.w(TAG, "Malformed BLE JSON envelope", e);
+            LogX.w(TAG, "Malformed BLE JSON envelope", e);
             failure("Malformed BLE JSON envelope: " + e.getMessage());
             return false;
         }
@@ -366,7 +365,7 @@ final class BloodhoundBridge implements BloodhoundSync.Port {
 
     @Override public void failure(String message) {
         if (message == null) message = "Bloodhound synchronization failed";
-        Log.w(TAG, message);
+        LogX.w(TAG, message);
         String text = message;
         main.post(() -> {
             if (!closed) Toast.makeText(mapView.getContext(), text, Toast.LENGTH_LONG).show();

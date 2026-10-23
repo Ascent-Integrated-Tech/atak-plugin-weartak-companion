@@ -7,7 +7,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.atakmap.android.chat.ChatManagerMapComponent;
@@ -71,7 +70,7 @@ public class BleCotBridge {
         mapView = getMapView();
         myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
         pluginCallsign = mapView.getDeviceCallsign();  // cs of eud
-        Log.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
+        LogX.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
     }
 
     public synchronized void startChatForwarding(WearTakBleClient client) {
@@ -93,11 +92,11 @@ public class BleCotBridge {
 
         chatManager = ChatManagerMapComponent.getInstance();
         if (chatManager == null) {
-            Log.w(TAG, "startChatForwarding: ATAK chat manager is unavailable");
+            LogX.w(TAG, "startChatForwarding: ATAK chat manager is unavailable");
             return;
         }
         chatManager.addChatMessageListener(chatMessageListener);
-        Log.i(TAG, "ATAK chat forwarding listener registered");
+        LogX.i(TAG, "ATAK chat forwarding listener registered");
     }
 
     public synchronized void stopChatForwarding() {
@@ -159,7 +158,7 @@ public class BleCotBridge {
             try {
                 gatewayForwarder.accept(new Bundle(message));
             } catch (RuntimeException e) {
-                Log.e(TAG, "Failed to relay ATAK chat to Gateway watches", e);
+                LogX.e(TAG, "Failed to relay ATAK chat to Gateway watches", e);
             }
         }
         if (client == null && garmin == null) return;
@@ -176,12 +175,12 @@ public class BleCotBridge {
                     ? garmin.sendMessage("chat_received", GarminChatPolicy.received(envelope))
                     : client.writeJsonLineToWatch(envelope.toString(), client.getReadySession());
             if (!handedOff) {
-                Log.w(TAG, "Could not relay ATAK chat message to watch");
+                LogX.w(TAG, "Could not relay ATAK chat message to watch");
             } else {
-                Log.d(TAG, "ATAK chat queued for watch; delivery not confirmed");
+                LogX.d(TAG, "ATAK chat queued for watch; delivery not confirmed");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to relay ATAK chat message to watch", e);
+            LogX.e(TAG, "Failed to relay ATAK chat message to watch", e);
         }
     }
 
@@ -193,7 +192,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendStandardPli: missing payload");
+                LogX.w(TAG, "sendStandardPli: missing payload");
                 return;
             }
 
@@ -202,12 +201,12 @@ public class BleCotBridge {
                     fix.lat, fix.lon, fix.hae, fix.ce, fix.le,
                     PhoneIdentity.metadata(mapView), System.currentTimeMillis());
 
-            Log.d(TAG, "Standard PLI XML:\n" + xml);
+            LogX.d(TAG, "Standard PLI XML:\n" + xml);
 
             dispatchCot("PLI", xml);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendStandardPli(json)", e);
+            LogX.e(TAG, "Error in sendStandardPli(json)", e);
         }
     }
 
@@ -216,13 +215,13 @@ public class BleCotBridge {
     // =========================================================================================
     private void dispatchCot(String label, String xml) {
         if (!cotQueue.submit(() -> dispatchCotOnWorker(label, xml))) {
-            Log.w(TAG, "dispatchCot(" + label + "): connection session stopped");
+            LogX.w(TAG, "dispatchCot(" + label + "): connection session stopped");
         }
     }
 
     private void dispatchCotOnWorker(String label, String xml) {
         if (xml == null || xml.isEmpty()) {
-            Log.w(TAG, "dispatchCot(" + label + "): empty xml");
+            LogX.w(TAG, "dispatchCot(" + label + "): empty xml");
             return;
         }
 
@@ -230,11 +229,11 @@ public class BleCotBridge {
         try {
             evt = CotEvent.parse(xml);
         } catch (Throwable t) {
-            Log.e(TAG, "dispatchCot(" + label + "): parse failed", t);
+            LogX.e(TAG, "dispatchCot(" + label + "): parse failed", t);
             return;
         }
         if (evt == null || !evt.isValid()) {
-            Log.w(TAG, "dispatchCot(" + label + "): invalid event");
+            LogX.w(TAG, "dispatchCot(" + label + "): invalid event");
             return;
         }
 
@@ -250,9 +249,9 @@ public class BleCotBridge {
                 } else {
                     internalCotDispatcher.dispatch(evt);
                 }
-                Log.d(TAG, "dispatchCot(" + label + "): dispatched INTERNAL");
+                LogX.d(TAG, "dispatchCot(" + label + "): dispatched INTERNAL");
             } catch (Throwable t) {
-                Log.e(TAG, "dispatchCot(" + label + "): internal dispatch failed", t);
+                LogX.e(TAG, "dispatchCot(" + label + "): internal dispatch failed", t);
             }
         }
 
@@ -260,9 +259,9 @@ public class BleCotBridge {
         if (externalCotDispatcher != null) {
             try {
                 externalCotDispatcher.dispatch(evt);
-                Log.d(TAG, "dispatchCot(" + label + "): dispatched EXTERNAL");
+                LogX.d(TAG, "dispatchCot(" + label + "): dispatched EXTERNAL");
             } catch (Throwable t) {
-                Log.e(TAG, "dispatchCot(" + label + "): external dispatch failed", t);
+                LogX.e(TAG, "dispatchCot(" + label + "): external dispatch failed", t);
             }
         }
 
@@ -277,7 +276,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendMarkerCot: missing payload");
+                LogX.w(TAG, "sendMarkerCot: missing payload");
                 return;
             }
 
@@ -291,7 +290,7 @@ public class BleCotBridge {
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
             if (Instant.parse(stale).toEpochMilli() <= System.currentTimeMillis()) {
-                Log.w(TAG, "Ignoring legacy stale BLE marker; explicit point deletion required");
+                LogX.w(TAG, "Ignoring legacy stale BLE marker; explicit point deletion required");
                 return;
             }
             String title = optString(p, "title", "");
@@ -409,7 +408,7 @@ public class BleCotBridge {
             dispatchCot("MARKER", xml);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendMarkerCot(json)", e);
+            LogX.e(TAG, "Error in sendMarkerCot(json)", e);
         }
     }
 
@@ -433,7 +432,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "handleEmergencyCot: missing payload");
+                LogX.w(TAG, "handleEmergencyCot: missing payload");
                 return;
             }
 
@@ -450,7 +449,7 @@ public class BleCotBridge {
             }
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
+            LogX.e(TAG, "Error in sendEmergencyAlert(json)", e);
         }
     }
 
@@ -486,7 +485,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendEmergencyAlert: missing payload");
+                LogX.w(TAG, "sendEmergencyAlert: missing payload");
                 return;
             }
 
@@ -557,7 +556,7 @@ public class BleCotBridge {
             dispatchCot("Emergency ALERT", xml);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendEmergencyAlert(json)", e);
+            LogX.e(TAG, "Error in sendEmergencyAlert(json)", e);
         }
     }
 
@@ -570,7 +569,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendEmergencyCancel: missing payload");
+                LogX.w(TAG, "sendEmergencyCancel: missing payload");
                 return;
             }
 
@@ -599,7 +598,7 @@ public class BleCotBridge {
             dispatchCot("Emergency CANCEL", xml);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendEmergencyCancel(json)", e);
+            LogX.e(TAG, "Error in sendEmergencyCancel(json)", e);
         }
     }
 
@@ -629,7 +628,7 @@ public class BleCotBridge {
     public void sendChat(String envelopeJson) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             if (!new Handler(Looper.getMainLooper()).post(() -> sendChat(envelopeJson))) {
-                Log.e(TAG, "Could not schedule ATAK chat send");
+                LogX.e(TAG, "Could not schedule ATAK chat send");
             }
             return;
         }
@@ -637,7 +636,7 @@ public class BleCotBridge {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
             if (p == null) {
-                Log.w(TAG, "sendChat: missing payload");
+                LogX.w(TAG, "sendChat: missing payload");
                 return;
             }
 
@@ -701,10 +700,10 @@ public class BleCotBridge {
                             requireChatManager().sendMessage(text, java.util.Collections.singletonList(all));
                         }
                     }));
-            Log.d(TAG, "Watch chat handed to ATAK; recipient delivery not confirmed");
+            LogX.d(TAG, "Watch chat handed to ATAK; recipient delivery not confirmed");
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in sendChat(json)", e);
+            LogX.e(TAG, "Error in sendChat(json)", e);
             Toast.makeText(mapView.getContext(),
                     "Unable to send watch chat through ATAK. Check the destination and connection.",
                     Toast.LENGTH_LONG).show();
@@ -717,7 +716,7 @@ public class BleCotBridge {
 
             String msgType = env.optString("msgType", "").trim();
             if (msgType.isEmpty()) {
-                Log.w(TAG, "handleJsonFromWearTak: missing msg_type");
+                LogX.w(TAG, "handleJsonFromWearTak: missing msg_type");
                 return;
             }
 
@@ -748,7 +747,7 @@ public class BleCotBridge {
             }
 
         } catch (Exception e) {
-            Log.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
+            LogX.e(TAG, "handleJsonFromWearTak: bad JSON envelope", e);
         }
     }
 
@@ -757,28 +756,28 @@ public class BleCotBridge {
         String msgType = envelope.optString("msgType", "").trim();
         JSONObject payload = envelope.optJSONObject("payload");
         if (msgType.isEmpty() || payload == null) {
-            Log.w(TAG, "handleGarminMessage: missing msgType or payload");
+            LogX.w(TAG, "handleGarminMessage: missing msgType or payload");
             return;
         }
 
         String envelopeJson = envelope.toString();
         switch (msgType) {
             case "relay_hello":
-                Log.i(TAG, "Garmin watch relay connected: "
+                LogX.i(TAG, "Garmin watch relay connected: "
                         + payload.optString("watchLabel", "Garmin watch"));
                 break;
             case "marker":
                 sendMarkerCot(envelopeJson, true);
                 break;
             case "marker_delete":
-                Log.w(TAG, "Garmin deletion rejected: no revision-gated paired point session");
+                LogX.w(TAG, "Garmin deletion rejected: no revision-gated paired point session");
                 break;
             case "emergency":
                 if (!payload.has("callsign")) {
                     try {
                         payload.put("callsign", pluginCallsign);
                     } catch (JSONException e) {
-                        Log.e(TAG, "Could not set Garmin emergency callsign", e);
+                        LogX.e(TAG, "Could not set Garmin emergency callsign", e);
                     }
                 }
                 // Cancellation must still clear the alert if the phone has lost its fix.
@@ -788,7 +787,7 @@ public class BleCotBridge {
                 }
                 EudFix phoneFix = getValidEudFix();
                 if (phoneFix == null) {
-                    Log.w(TAG, "Garmin emergency rejected: no valid phone location (state="
+                    LogX.w(TAG, "Garmin emergency rejected: no valid phone location (state="
                             + payload.optString("state", "") + ", uid="
                             + payload.optString("uid", "") + ")");
                     break;
@@ -803,14 +802,14 @@ public class BleCotBridge {
                     if (!payload.has("cs")) payload.put("cs", pluginCallsign);
                     sendChat(envelope.toString());
                 } catch (JSONException | IllegalArgumentException e) {
-                    Log.w(TAG, "Garmin chat rejected: " + e.getMessage());
+                    LogX.w(TAG, "Garmin chat rejected: " + e.getMessage());
                 }
                 break;
             case "entity_sync_request":
-                Log.i(TAG, "Garmin requested an ATAK entity snapshot");
+                LogX.i(TAG, "Garmin requested an ATAK entity snapshot");
                 break;
             default:
-                Log.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
+                LogX.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
                 break;
         }
     }
@@ -820,7 +819,7 @@ public class BleCotBridge {
         ArrayList<Map<String, Object>> entities = new ArrayList<>();
         MapView mv = mapView;
         if (mv == null || mv.getRootGroup() == null) {
-            Log.w(TAG, "getGarminEntitySnapshot: ATAK map is unavailable");
+            LogX.w(TAG, "getGarminEntitySnapshot: ATAK map is unavailable");
             return entities;
         }
 
@@ -830,7 +829,7 @@ public class BleCotBridge {
         if (mv.getSelfMarker() != null) self = mv.getSelfMarker().getPoint();
         if (self == null || !self.isValid()
                 || !PhoneFixValidator.isUsable(self.getLatitude(), self.getLongitude())) {
-            Log.w(TAG, "getGarminEntitySnapshot: no valid self position");
+            LogX.w(TAG, "getGarminEntitySnapshot: no valid self position");
             return entities;
         }
         final ArrayList<double[]> distances = new ArrayList<>();
@@ -868,7 +867,7 @@ public class BleCotBridge {
         for (int i = 0; i < distances.size() && nearest.size() < limit; i++) {
             nearest.add(entities.get((int) distances.get(i)[1]));
         }
-        Log.i(TAG, "getGarminEntitySnapshot: " + nearest.size() + " of "
+        LogX.i(TAG, "getGarminEntitySnapshot: " + nearest.size() + " of "
                 + entities.size() + " units selected (self=" + (self != null) + ")");
         return nearest;
     }
@@ -898,7 +897,7 @@ public class BleCotBridge {
             CotPoint point = new CotPoint(gp);
             return new EudFix(lat, lon, point.getHae(), 10.0, 10.0);
         } catch (Throwable t) {
-            Log.e(TAG, "getValidEudFix: exception", t);
+            LogX.e(TAG, "getValidEudFix: exception", t);
             return null;
         }
     }
