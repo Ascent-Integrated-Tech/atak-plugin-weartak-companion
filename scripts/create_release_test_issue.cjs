@@ -1,9 +1,38 @@
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
+function verifiedRollingDetails(context, release, pipelineId, asset) {
+  const body = release.body;
+  if (!asset) {
+    const iid = /project pipeline IID `([1-9]\d*)`/.exec(body);
+    const version = /^- APK version: `(\d+(?:\.\d+)+)(?:\s[^`\r\n]*)?`/m.exec(body);
+    const versionedLink = iid && version &&
+      body.includes(`/WearTAK-Companion-${version[1]}-p${iid[1]}.apk)`);
+    return body.includes(`- Pipeline: [#${pipelineId}](`) &&
+      /^- SHA-256: `[0-9a-f]{64}`$/m.test(body) &&
+      (body.includes(`/WearTAK-ATAK-Plugin-civ-release-pipeline-${pipelineId}.apk)`) ||
+        versionedLink);
+  }
+  const name = /^WearTAK-Companion-(\d+(?:\.\d+)+)-p([1-9]\d*)\.apk$/.exec(asset.name || '');
+  const legacyName = asset.name === `WearTAK-ATAK-Plugin-civ-release-pipeline-${pipelineId}.apk`;
+  const checksum = /^- SHA256: `([0-9a-f]{64})`$/m.exec(body);
+  const version = /^- APK version: \*\*([^*\r\n]+)\*\* \(versionCode \*\*([1-9]\d*)\*\*\)$/m.exec(body);
+  const build = /^- Build: GitLab pipeline \*\*([1-9]\d*)\*\* \(project pipeline \*\*([1-9]\d*)\*\*\)$/m.exec(body);
+  const pipeline = /^- Pipeline: (https:\/\/git\.tak\.gov\/aegorsuch\/atak-plugin-weartak-companion\/-\/pipelines\/[1-9]\d*)$/m.exec(body);
+  const source = /^- Source commit: `[0-9a-f]{40}` on TAK\.gov `develop`$/m.test(body);
+  if ((!name && !legacyName) || !checksum || !version || !build || !pipeline || !source) return false;
+  const baseVersion = /^(\d+(?:\.\d+)+)(?:\s|$)/.exec(version[1]);
+  return baseVersion && (!name || baseVersion[1] === name[1]) &&
+    asset.label === asset.name && asset.sha256 === checksum[1] &&
+    asset.pipeline_iid === build[2] && (!name || name[2] === build[2]) && build[1] === pipelineId &&
+    pipeline[1].endsWith(`/pipelines/${pipelineId}`) &&
+    body.includes('<!-- /weartak-companion-rolling-release:managed -->') &&
+    asset.url === `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/tak-gov-ci-cd-pipeline/${asset.name}`;
+}
+
 function testRelease(context) {
   if (context.eventName === 'repository_dispatch') {
-    const { release, pipeline_id: pipelineId } = context.payload.client_payload;
+    const { release, pipeline_id: pipelineId, asset } = context.payload.client_payload || {};
     if (
       !release || release.draft !== false ||
       !Number.isSafeInteger(release.id) || release.id <= 0 ||
@@ -11,14 +40,13 @@ function testRelease(context) {
       typeof pipelineId !== 'string' || !/^[1-9]\d*$/.test(pipelineId) ||
       typeof release.body !== 'string' ||
       !release.body.includes('<!-- weartak-companion-rolling-release:managed -->') ||
-      !release.body.includes(`- Pipeline: [#${pipelineId}](`) ||
-      !/^- SHA-256: `[0-9a-f]{64}`$/m.test(release.body) ||
-      !release.body.includes(`/WearTAK-ATAK-Plugin-civ-release-pipeline-${pipelineId}.apk)`)
+      !verifiedRollingDetails(context, release, pipelineId, asset)
     ) {
       throw new Error('Invalid verified rolling-release notification.');
     }
     return {
       release,
+      asset,
       key: `${release.id}-pipeline-${pipelineId}`,
       title: `Release testing: TAK.gov pipeline ${pipelineId}`,
     };
@@ -35,7 +63,7 @@ async function createReleaseTestIssue({ github, context, core, tester }) {
     core.info('No published build to assign; rolling builds require a verified publisher notification.');
     return;
   }
-  const { release, key, title } = candidate;
+  const { release, asset, key, title } = candidate;
   if (typeof tester !== 'string' || !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(tester)) {
     throw new Error('Set the RELEASE_TESTER repository variable to an authorized tester GitHub username.');
   }
@@ -85,6 +113,7 @@ async function createReleaseTestIssue({ github, context, core, tester }) {
     '## Published release details',
     '',
     release.body || 'No release notes were provided.',
+    ...(asset ? ['', `**APK:** [${asset.name}](${asset.url})`] : []),
     '',
     '---',
     '',

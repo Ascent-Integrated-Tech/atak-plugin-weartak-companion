@@ -85,8 +85,13 @@ release ID.
 For the fixed rolling release, the TAK.gov publisher sends the
 `weartak-rolling-release-published` repository dispatch after the signed APK is
 uploaded, downloaded for byte verification, and its release metadata is updated.
-The dispatch carries that build's release notes, pipeline ID, download link, and
-SHA-256 so queued runs cannot accidentally report a newer build's details.
+The dispatch carries that build's release notes, pipeline ID, and verified asset
+metadata (filename/native label, project IID, download URL and SHA-256), so queued
+runs cannot accidentally report a newer build's details. The checklist validator
+cross-checks the versioned filename, manifest version, global/project pipeline
+identifiers, canonical URLs and checksum against the notes. It accepts queued
+legacy/transitional link-bearing formats as well as the new watch-style notes;
+the new notes need not expose a second APK download link on the release page.
 The workflow creates one checklist per release ID and pipeline ID. Retries do
 not recreate existing checklists, including closed ones; an existing open issue
 can have a missing assignment repaired without replacing its results.

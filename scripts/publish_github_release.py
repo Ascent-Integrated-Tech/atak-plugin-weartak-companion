@@ -211,7 +211,10 @@ class GitHubClient(ApiClient):
         if status != 204:
             raise PublishError(f"Could not remove a superseded rolling APK (HTTP {status})")
 
-    def dispatch_release_test(self, release_id: int, pipeline_id: str, body: str) -> None:
+    def dispatch_release_test(
+        self, release_id: int, pipeline_id: str, body: str,
+        asset: dict[str, str] | None = None,
+    ) -> None:
         status, _ = self.json_request(
             "POST",
             f"{self.repository_path}/dispatches",
@@ -219,6 +222,7 @@ class GitHubClient(ApiClient):
                 "event_type": "weartak-rolling-release-published",
                 "client_payload": {
                     "pipeline_id": pipeline_id,
+                    **({"asset": asset} if asset is not None else {}),
                     "release": {
                         "id": release_id,
                         "tag_name": RELEASE_TAG,
@@ -555,7 +559,13 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
     )
     description = merge_release_description(str(release.get("body", "")), description)
     github.update_release_body(release_id, description, title)
-    github.dispatch_release_test(release_id, pipeline_id, description)
+    github.dispatch_release_test(release_id, pipeline_id, description, {
+        "name": asset_name,
+        "label": asset_label,
+        "sha256": checksum,
+        "url": current_asset["browser_download_url"],
+        "pipeline_iid": pipeline_iid,
+    })
 
     if previous_release_owned:
         for asset in assets:
