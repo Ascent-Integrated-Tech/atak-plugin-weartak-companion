@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.content.Context;
@@ -333,6 +334,113 @@ public class BlePickerIdentityTest {
         return client;
     }
 
+    @Test public void sameAddressRefreshesInPlaceButSharedCallsignsRemainSeparate() throws Exception {
+        WearTakBleClient client = scanningClient();
+        startScan(client, collecting(new ArrayList<>()));
+        ScanCallback callback = (ScanCallback) get(client, "activeScanCallback");
+        callback.onScanResult(0, result(null, payload("SHARED"), false));
+        lastSeen(client).put(ADDRESS, 0L);
+        assertTrue(client.expireScanDevices(WearTakBleClient.SCAN_ENTRY_TTL_MS - 1).isEmpty());
+        ScanResult updated = result(null, payload("SHARED"), false);
+        when(updated.getRssi()).thenReturn(-31);
+        callback.onScanResult(0, updated);
+        assertEquals(1, discoveries(client).size());
+        assertEquals(-31, discoveries(client).get(ADDRESS).rssi);
+        lastSeen(client).put(ADDRESS, 5_000L);
+        ScanResult rotated = result(null, payload("SHARED"), false);
+        String newAddress = "00:00:00:00:00:02";
+        when(rotated.getDevice().getAddress()).thenReturn(newAddress);
+        callback.onScanResult(0, rotated);
+        lastSeen(client).put(newAddress, 10_000L);
+        assertEquals(2, discoveries(client).size());
+        assertEquals("SHARED", discoveries(client).get(ADDRESS).primaryName());
+        assertEquals("SHARED", discoveries(client).get(newAddress).primaryName());
+        WearTakBleClient.DiscoveredDevice selected = discoveries(client).get(ADDRESS);
+        set(client, "pendingBondDevice", selected);
+        assertEquals(Collections.singletonList(ADDRESS), client.expireScanDevices(15_000));
+        assertSame(selected, get(client, "pendingBondDevice"));
+        assertEquals(Collections.singleton(newAddress), discoveries(client).keySet());
+        assertTrue(client.expireScanDevices(15_000).isEmpty());
+        assertEquals(Collections.singletonList(newAddress), client.expireScanDevices(20_000));
+        callback.onScanResult(0, result(null));
+        assertEquals("SHARED", discoveries(client).get(ADDRESS).primaryName());
+    }
+
+    @Test public void expiryTimerRemovesSilentPeersAndIsCancelledAndFencedAcrossScans() throws Exception {
+        WearTakBleClient client = scanningClient();
+        WearTakBleClient.ScanListener listener = mock(WearTakBleClient.ScanListener.class);
+        client.scanForDevices(listener);
+        ScanCallback callback = (ScanCallback) get(client, "activeScanCallback");
+        callback.onScanResult(0, result(null, payload("ALPHA"), false));
+        Runnable expiry = (Runnable) get(client, "scanExpiryRunnable");
+        assertNotNull(expiry);
+        lastSeen(client).put(ADDRESS, -WearTakBleClient.SCAN_ENTRY_TTL_MS);
+        expiry.run();
+        verify(listener).onDevicesExpired(Collections.singletonList(ADDRESS));
+        assertTrue(discoveries(client).isEmpty());
+        expiry.run();
+        verify(listener, times(1)).onDevicesExpired(anyList());
+        Handler main = (Handler) get(client, "main");
+        verify(main, atLeast(2)).postDelayed(eq(expiry), eq(1_000L));
+
+        client.scanForDevices(listener);
+        verify(main).removeCallbacks(expiry);
+        ScanCallback next = (ScanCallback) get(client, "activeScanCallback");
+        next.onScanResult(0, result(null));
+        lastSeen(client).put(ADDRESS, -WearTakBleClient.SCAN_ENTRY_TTL_MS);
+        expiry.run();
+        assertEquals(1, discoveries(client).size());
+        callback.onScanResult(0, result("STALE"));
+        assertNull(discoveries(client).get(ADDRESS).name);
+
+        Runnable current = (Runnable) get(client, "scanExpiryRunnable");
+        client.resetSession("cancel scan");
+        verify(main).removeCallbacks(current);
+        assertNull(get(client, "scanExpiryRunnable"));
+        current.run();
+        verify(listener, times(1)).onDevicesExpired(anyList());
+        client.scanForDevices(listener);
+        current = (Runnable) get(client, "scanExpiryRunnable");
+        ((ScanCallback) get(client, "activeScanCallback")).onScanFailed(3);
+        verify(main).removeCallbacks(current);
+        verify(listener).onScanError("Scan failed: 3");
+        assertNull(get(client, "scanExpiryRunnable"));
+        current.run();
+        verify(listener, times(1)).onDevicesExpired(anyList());
+    }
+
+    @Test public void finalScanSnapshotPrunesExpiredPeersWithoutWaitingForNextTimerTick() throws Exception {
+        WearTakBleClient client = scanningClient();
+        WearTakBleClient.ScanListener listener = mock(WearTakBleClient.ScanListener.class);
+        client.scanForDevices(listener);
+        ScanCallback callback = (ScanCallback) get(client, "activeScanCallback");
+        callback.onScanResult(0, result(null, payload("ALPHA"), false));
+        lastSeen(client).put(ADDRESS, -WearTakBleClient.SCAN_ENTRY_TTL_MS);
+        Runnable timeout = (Runnable) get(client, "scanTimeoutRunnable");
+        timeout.run();
+        verify(listener).onScanFinished(Collections.emptyList());
+        assertTrue(discoveries(client).isEmpty());
+        assertNull(get(client, "scanExpiryRunnable"));
+        callback.onScanResult(0, result(null));
+        assertTrue(discoveries(client).isEmpty());
+        client.scanForDevices(listener);
+        assertTrue(lastSeen(client).isEmpty());
+        callback = (ScanCallback) get(client, "activeScanCallback");
+        callback.onScanResult(0, result(null));
+        assertEquals("ALPHA", discoveries(client).get(ADDRESS).primaryName());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, Long> lastSeen(WearTakBleClient client) throws Exception {
+        return (java.util.Map<String, Long>) get(client, "scanLastSeen");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, WearTakBleClient.DiscoveredDevice> discoveries(
+            WearTakBleClient client) throws Exception {
+        return (java.util.Map<String, WearTakBleClient.DiscoveredDevice>) get(client, "discovered");
+    }
+
     private static void receive(WearTakBleClient client, String json, long session) throws Exception {
         java.lang.reflect.Method method = WearTakBleClient.class.getDeclaredMethod(
                 "deliverJsonLine", String.class, long.class);
@@ -378,6 +486,8 @@ public class BlePickerIdentityTest {
         });
         BluetoothAdapter adapter = mock(BluetoothAdapter.class, withSettings().mockMaker(MockMakers.INLINE));
         when(adapter.isEnabled()).thenReturn(true);
+        BluetoothLeScanner scanner = mock(BluetoothLeScanner.class, withSettings().mockMaker(MockMakers.INLINE));
+        when(adapter.getBluetoothLeScanner()).thenReturn(scanner);
         set(client, "appContext", context);
         set(client, "main", main);
         set(client, "bluetoothAdapter", adapter);
@@ -390,6 +500,7 @@ public class BlePickerIdentityTest {
         set(client, "scanning", true);
         set(client, "activeScanCallback", client.createScanCallback(listener));
         ((java.util.Map<?, ?>) get(client, "discovered")).clear();
+        lastSeen(client).clear();
     }
 
     private static ScanResult result(String advertisedName) {

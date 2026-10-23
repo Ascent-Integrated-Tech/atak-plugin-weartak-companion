@@ -377,9 +377,19 @@ final class MultiwatchGateway {
                     render();
                 });
             }
+            @Override public void onDevicesExpired(List<String> addresses) {
+                onMain(() -> {
+                    if (!valid()) return;
+                    for (String address : addresses) discoveries.remove(address);
+                    render();
+                });
+            }
             @Override public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
                 onMain(() -> {
                     if (!valid()) return;
+                    discoveries.clear();
+                    for (WearTakBleClient.DiscoveredDevice device : devices)
+                        discoveries.put(device.address, device);
                     scanning = false;
                     status = discoveries.isEmpty() ? "No WearTAK watches found. Open WearTAK on the watch."
                             : "";

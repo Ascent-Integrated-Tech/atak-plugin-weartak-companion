@@ -37,8 +37,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -151,11 +153,15 @@ public class WearTakBleClient {
             });
 
     private final LinkedHashMap<String, DiscoveredDevice> discovered = new LinkedHashMap<>();
+    private final LinkedHashMap<String, Long> scanLastSeen = new LinkedHashMap<>();
+    static final long SCAN_ENTRY_TTL_MS = 10_000;
+    private static final long SCAN_EXPIRY_INTERVAL_MS = 1_000;
     // Scan responses are not present in every result; retain identity across scans/resets.
     private final LinkedHashMap<String, String> advertisedCallsigns = new LinkedHashMap<>();
 
     private ScanCallback activeScanCallback = null;
     private Runnable scanTimeoutRunnable = null;
+    private Runnable scanExpiryRunnable;
 
     // RX framing: newline-delimited JSON
     private final Object rxLock = new Object();
@@ -472,6 +478,7 @@ public class WearTakBleClient {
 
     public interface ScanListener {
         void onDeviceFound(DiscoveredDevice device);
+        default void onDevicesExpired(List<String> addresses) { }
         void onScanFinished(List<DiscoveredDevice> devices);
         void onScanError(String msg);
     }
@@ -530,6 +537,7 @@ public class WearTakBleClient {
 
         synchronized (rxLock) { rxBuffer.clear(); }
         discovered.clear();
+        scanLastSeen.clear();
         pendingBondDevice = null;
         if (reason == null || !reason.startsWith("bond_recovery ")) {
             pendingBondRecoveryName = null;
@@ -566,16 +574,16 @@ public class WearTakBleClient {
         }
 
         discovered.clear();
+        scanLastSeen.clear();
         scanning = true;
 
-        ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .build();
+        ScanSettings.Builder settings = new ScanSettings.Builder();
+        settings.setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY);
 
         activeScanCallback = createScanCallback(listener);
 
         try {
-            scanner.startScan(null, settings, activeScanCallback);
+            scanner.startScan(null, settings.build(), activeScanCallback);
         } catch (SecurityException e) {
             scanning = false;
             activeScanCallback = null;
@@ -596,6 +604,34 @@ public class WearTakBleClient {
             if (listener != null) listener.onScanFinished(out);
         };
         main.postDelayed(scanTimeoutRunnable, Math.max(1, timeoutSeconds) * 1000L);
+        scheduleScanExpiry(listener);
+    }
+
+    private void scheduleScanExpiry(ScanListener listener) {
+        final ScanCallback owner = activeScanCallback;
+        scanExpiryRunnable = new Runnable() {
+            @Override public void run() {
+                if (!scanning || owner != activeScanCallback || scanExpiryRunnable != this) return;
+                List<String> expired = expireScanDevices(android.os.SystemClock.elapsedRealtime());
+                if (!expired.isEmpty() && listener != null) listener.onDevicesExpired(expired);
+                if (scanning && owner == activeScanCallback && scanExpiryRunnable == this)
+                    main.postDelayed(this, SCAN_EXPIRY_INTERVAL_MS);
+            }
+        };
+        main.postDelayed(scanExpiryRunnable, SCAN_EXPIRY_INTERVAL_MS);
+    }
+
+    synchronized List<String> expireScanDevices(long nowMs) {
+        List<String> expired = new ArrayList<>();
+        Iterator<Map.Entry<String, Long>> entries = scanLastSeen.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry<String, Long> entry = entries.next();
+            if (nowMs - entry.getValue() < SCAN_ENTRY_TTL_MS) continue;
+            discovered.remove(entry.getKey());
+            expired.add(entry.getKey());
+            entries.remove();
+        }
+        return expired;
     }
 
     ScanCallback createScanCallback(ScanListener listener) {
@@ -637,6 +673,7 @@ public class WearTakBleClient {
                         discovered.get(addr)));
 
                 discovered.put(addr, dd);
+                scanLastSeen.put(addr, android.os.SystemClock.elapsedRealtime());
 
                 if (listener != null) listener.onDeviceFound(dd);
                 Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
@@ -663,9 +700,12 @@ public class WearTakBleClient {
 
     private synchronized List<DiscoveredDevice> stopScanInternal(String reason) {
         if (scanning) lastScanStopMs = android.os.SystemClock.uptimeMillis();
+        expireScanDevices(android.os.SystemClock.elapsedRealtime());
         scanning = false;
 
         clearScanTimeout();
+        if (scanExpiryRunnable != null) main.removeCallbacks(scanExpiryRunnable);
+        scanExpiryRunnable = null;
 
         try {
             if (scanner != null && activeScanCallback != null) {

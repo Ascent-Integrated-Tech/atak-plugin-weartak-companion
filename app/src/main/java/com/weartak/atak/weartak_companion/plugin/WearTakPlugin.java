@@ -2278,9 +2278,21 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
 
             @Override
+            public void onDevicesExpired(List<String> addresses) {
+                mainHandler.post(() -> {
+                    if (sessionId != scanSessionCount) return;
+                    scannedDevices.removeIf(device -> addresses.contains(device.address));
+                    refreshDeviceListUi();
+                });
+            }
+
+            @Override
             public void onScanFinished(List<WearTakBleClient.DiscoveredDevice> devices) {
                 mainHandler.post(() -> {
                     if (sessionId != scanSessionCount) return;
+                    scannedDevices.clear();
+                    scannedDevices.addAll(devices);
+                    refreshDeviceListUi();
                     if (emptyState != null) {
                         emptyState.setVisibility(View.GONE);
                     }
