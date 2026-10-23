@@ -31,6 +31,7 @@ class FakeGitHub:
         self.verification_failure = False
         self.release_creations = 0
         self.test_notifications: list[dict[str, Any]] = []
+        self.notified_assets: list[dict[str, str] | None] = []
         self.dispatch_failure = False
 
     def require_existing_tag(self) -> None:
@@ -95,7 +96,8 @@ class FakeGitHub:
         self.deleted.append(asset_id)
         self.assets = [item for item in self.assets if item["id"] != asset_id]
 
-    def dispatch_release_test(self, release_id: int, pipeline_id: str, body: str) -> None:
+    def dispatch_release_test(self, release_id: int, pipeline_id: str, body: str,
+                              asset: dict[str, str] | None = None) -> None:
         if self.dispatch_failure:
             raise publisher.PublishError("test notification failed")
         if self.body != body:
@@ -103,6 +105,7 @@ class FakeGitHub:
         self.test_notifications.append(
             {"release_id": release_id, "pipeline_id": pipeline_id, "body": body}
         )
+        self.notified_assets.append(asset)
 
 
 def make_env(directory: Path, pipeline_id: str = "100") -> dict[str, str]:
@@ -206,6 +209,12 @@ class RollingReleaseTests(unittest.TestCase):
         self.assertEqual(github.test_notifications, [
             {"release_id": 77, "pipeline_id": "100", "body": github.body}
         ])
+        self.assertEqual(github.notified_assets, [{
+            "name": asset_name, "label": asset_name,
+            "pipeline_iid": "100",
+            "url": github.assets[0]["browser_download_url"],
+            "sha256": github.assets[0]["digest"].removeprefix("sha256:"),
+        }])
 
     def test_dispatch_failure_is_visible_and_verified_publication_can_be_retried(self) -> None:
         github = FakeGitHub()
@@ -233,6 +242,11 @@ class RollingReleaseTests(unittest.TestCase):
         self.assertEqual(payload["client_payload"]["release"]["body"], "verified notes")
         self.assertEqual(payload["client_payload"]["release"]["id"], 77)
         self.assertFalse(payload["client_payload"]["release"]["draft"])
+        asset = {"name": "WearTAK-Companion-5.6.0-p28.apk", "label": "WearTAK-Companion-5.6.0-p28.apk",
+                 "sha256": "a" * 64, "pipeline_iid": "28", "url": "https://github.com/example/apk"}
+        with patch.object(github, "json_request", return_value=(204, None)) as request:
+            github.dispatch_release_test(77, "100", "verified notes", asset)
+        self.assertEqual(request.call_args.kwargs["body"]["client_payload"]["asset"], asset)
         with patch.object(github, "json_request", return_value=(403, None)):
             with self.assertRaisesRegex(publisher.PublishError, "workflow \\(HTTP 403\\)"):
                 github.dispatch_release_test(77, "100", "verified notes")

@@ -159,6 +159,78 @@ function rollingHarness(pipelineId = '100', pages) {
   return h;
 }
 
+function watchStyleHarness(pipelineId = '100', pages) {
+  const h = rollingHarness(pipelineId, pages);
+  const payload = h.args.context.payload.client_payload;
+  payload.asset = {
+    name: 'WearTAK-Companion-5.6.0-p28.apk',
+    label: 'WearTAK-Companion-5.6.0-p28.apk',
+    sha256: 'a'.repeat(64),
+    pipeline_iid: '28',
+    url: 'https://github.com/example/repo/releases/download/tak-gov-ci-cd-pipeline/WearTAK-Companion-5.6.0-p28.apk',
+  };
+  payload.release.body = [
+    '<!-- weartak-companion-rolling-release:managed -->',
+    '- APK version: **5.6.0 (abc) - [5.6.0]** (versionCode **123**)',
+    `- Build: GitLab pipeline **${pipelineId}** (project pipeline **28**)`,
+    `- Pipeline: https://git.tak.gov/aegorsuch/atak-plugin-weartak-companion/-/pipelines/${pipelineId}`,
+    `- Source commit: \`${'b'.repeat(40)}\` on TAK.gov \`develop\``,
+    `- SHA256: \`${'a'.repeat(64)}\``,
+    '<!-- /weartak-companion-rolling-release:managed -->',
+  ].join('\n');
+  return h;
+}
+
+test('watch-style verified asset creates an assigned pipeline checklist and preserves its snapshot', async () => {
+  const h = watchStyleHarness();
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 1);
+  assert.deepEqual(h.created[0].assignees, ['test-user']);
+  assert.match(h.created[0].body, /weartak-release-testing:42-pipeline-100/);
+  assert.match(h.created[0].body, /SHA256/);
+  assert.match(h.created[0].body, /WearTAK-Companion-5\.6\.0-p28\.apk/);
+});
+
+test('watch-style duplicate notification creates no second checklist', async () => {
+  const h = watchStyleHarness('100', [[{
+    state: 'closed', body: '<!-- weartak-release-testing:42-pipeline-100 -->',
+    html_url: 'https://github.com/example/repo/issues/7',
+  }]]);
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 0);
+});
+
+test('queued transitional versioned-link notifications remain supported', async () => {
+  const h = rollingHarness();
+  const release = h.args.context.payload.client_payload.release;
+  release.body = release.body.replace('WearTAK-ATAK-Plugin-civ-release-pipeline-100.apk',
+    'WearTAK-Companion-5.6.0-p28.apk').replace('- Plugin version: `5.6.0`',
+    '- APK version: `5.6.0 (abc)` (versionCode `123`)\n- Build: GitLab pipeline `100` (project pipeline IID `28`)');
+  await createReleaseTestIssue(h.args);
+  assert.equal(h.created.length, 1);
+});
+
+test('watch-style asset and notes must agree before any API call', async () => {
+  const mutations = [
+    (p) => { delete p.asset; },
+    (p) => { p.asset.sha256 = 'c'.repeat(64); },
+    (p) => { p.asset.pipeline_iid = '29'; },
+    (p) => { p.asset.name = 'WearTAK-Companion-9.9.9-p28.apk'; },
+    (p) => { p.asset.label = 'unowned'; },
+    (p) => { p.asset.url = 'https://untrusted.example/apk'; },
+    (p) => { p.pipeline_id = '101'; },
+    (p) => { p.release.body = p.release.body.replace('SHA256', 'missing'); },
+    (p) => { p.release.body = p.release.body.replace('git.tak.gov', 'untrusted.example'); },
+  ];
+  for (const mutate of mutations) {
+    const h = watchStyleHarness();
+    mutate(h.args.context.payload.client_payload);
+    await assert.rejects(createReleaseTestIssue(h.args), /Invalid verified/);
+    assert.equal(h.created.length, 0);
+    assert.equal(h.listCalls.length, 0);
+  }
+});
+
 test('verified rolling notification creates a pipeline-specific assigned checklist', async () => {
   const h = rollingHarness();
   await createReleaseTestIssue(h.args);
