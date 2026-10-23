@@ -160,8 +160,18 @@ public class WearTakBleClient {
     private volatile boolean mtuNegotiated = false;
     private volatile int negotiatedMtu = 23; // default ATT MTU if unknown
 
-    private static final long RECONNECT_COOLDOWN_MS = 250;
-    private long lastGattCloseMs = 0L;
+    private static final long RECONNECT_COOLDOWN_MS = 1000;
+    private static final long SCAN_SETTLE_MS = 300;
+    private static final long NEVER_MS = Long.MIN_VALUE / 4;
+    private long lastGattCloseMs = NEVER_MS;
+    private long lastScanStopMs = NEVER_MS;
+
+    // Bounded retry of a user-initiated Traditional connect whose link never came up.
+    private static final int MAX_CONNECT_RETRIES = 2;
+    private static final long[] CONNECT_RETRY_BACKOFF_MS = {1000, 2000};
+    private DiscoveredDevice connectRetryDevice;
+    private int connectRetries;
+    private boolean linkUp;
 
     // -------- TX queue (chunked writes) --------
     private final Object txLock = new Object();
@@ -184,6 +194,8 @@ public class WearTakBleClient {
         void onError(String msg);
         void onTrustLost(String deviceAddress, String reason);
         default void onBluetoothStateChanged(boolean available) { }
+        /** Non-error progress, e.g. an automatic retry of a connect whose link never came up. */
+        default void onConnectionProgress(String message) { }
     }
 
     private final AtomicReference<JsonListener> jsonListener = new AtomicReference<>(null);
@@ -398,6 +410,7 @@ public class WearTakBleClient {
     }
 
     public synchronized void stop() {
+        cancelConnectRetry();
         reconnect.stop();
         started = false;
         stopScanInternal("stop()");
@@ -414,6 +427,7 @@ public class WearTakBleClient {
 
     public synchronized void resetSession(String reason) {
         logI("resetSession(): " + reason);
+        cancelConnectRetry();
         stopScanInternal("resetSession: " + reason);
         closeGattInternal("resetSession: " + reason);
 
@@ -430,6 +444,7 @@ public class WearTakBleClient {
 
     public synchronized void scanForDevices(final ScanListener listener) {
         if (!started) start();
+        cancelConnectRetry();
 
         String unavailable = bluetoothUnavailableReason();
         if (unavailable != null) {
@@ -543,6 +558,7 @@ public class WearTakBleClient {
     }
 
     private synchronized List<DiscoveredDevice> stopScanInternal(String reason) {
+        if (scanning) lastScanStopMs = android.os.SystemClock.uptimeMillis();
         scanning = false;
 
         clearScanTimeout();
@@ -665,7 +681,55 @@ public class WearTakBleClient {
     public synchronized void connectToSelectedDevice(DiscoveredDevice device, boolean allowBondCreation) {
         reconnect.disarm();
         if (automaticReconnectAllowed) reconnectPreference().disarm();
+        cancelConnectRetry();
+        // Samsung Wearable (allowBondCreation=false) keeps its own owner-driven recovery.
+        if (allowBondCreation && device != null && device.address != null) connectRetryDevice = device;
         connectToSelectedDeviceInternal(device, allowBondCreation);
+    }
+
+    private synchronized void cancelConnectRetry() {
+        connectRetryDevice = null;
+        connectRetries = 0;
+    }
+
+    /**
+     * Retries a user-initiated connect whose link never came up (e.g. HCI 0x3E / GATT 133) on the
+     * same still-bonded address. Any reset, Disconnect, scan, new connect, stop, Bluetooth off or
+     * trust loss clears the retry state and bumps the session generation, fencing the backoff.
+     */
+    private boolean retryUnestablishedConnect(BluetoothGatt gatt, int status) {
+        DiscoveredDevice target = connectRetryDevice;
+        if (target == null || linkUp || connected || connectRetries >= MAX_CONNECT_RETRIES
+                || !isTransientConnectStatus(status)) return false;
+        BluetoothDevice peer = gatt.getDevice();
+        if (peer == null || !target.address.equals(peer.getAddress()) || !isBonded(peer)
+                || !hasConnectPermission()) return false;
+
+        int attempt = connectRetries + 1;
+        resetSession("gatt_status_" + status + " retry " + attempt + "/" + MAX_CONNECT_RETRIES);
+        connectRetryDevice = target;
+        connectRetries = attempt;
+        final long token = sessionGeneration;
+        main.postDelayed(() -> {
+            synchronized (WearTakBleClient.this) {
+                if (!started || token != sessionGeneration || connectRetryDevice != target) return;
+                if (!isBondedAddress(target.address)) {
+                    cancelConnectRetry();
+                    handleTrustLoss(target.address, "bond_lost_before_retry", "Reconnect requires existing bond");
+                    return;
+                }
+                connectToSelectedDeviceInternal(target, false);
+            }
+        }, CONNECT_RETRY_BACKOFF_MS[attempt - 1]);
+        String message = "Retrying connection (" + attempt + "/" + MAX_CONNECT_RETRIES + ")\u2026";
+        logW(message + " after GATT status " + status);
+        JsonListener l = jsonListener.get();
+        if (l != null) l.onConnectionProgress(message);
+        return true;
+    }
+
+    private static boolean isTransientConnectStatus(int status) {
+        return status == 133 || status == 8 || status == 62 || status == 147;
     }
 
     private synchronized void connectToSelectedDeviceInternal(DiscoveredDevice device, boolean allowBondCreation) {
@@ -731,8 +795,9 @@ public class WearTakBleClient {
 
         pendingBondDevice = null;
         long now = android.os.SystemClock.uptimeMillis();
-        long dt = now - lastGattCloseMs;
-        long waitMs = (dt < RECONNECT_COOLDOWN_MS) ? (RECONNECT_COOLDOWN_MS - dt) : 0;
+        long waitMs = Math.max(0, Math.max(
+                RECONNECT_COOLDOWN_MS - (now - lastGattCloseMs),
+                SCAN_SETTLE_MS - (now - lastScanStopMs)));
 
         if (waitMs > 0) {
             final DiscoveredDevice copy = device;
@@ -1256,10 +1321,12 @@ public class WearTakBleClient {
 
         private void handleConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (retryUnestablishedConnect(gatt, status)) return;
                 failSecureSession("GATT connection failed: " + status, "gatt_status_" + status);
                 return;
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                linkUp = true;
                 if (!hasConnectPermission()) {
                     failSecureSession("Missing Bluetooth connect permission", "connect_permission_lost");
                     return;
@@ -1396,6 +1463,7 @@ public class WearTakBleClient {
                 refreshingServices = false;
                 if (automaticReconnectAllowed) reconnectPreference().arm(gatt.getDevice().getAddress());
                 reconnect.onReady(gatt.getDevice().getAddress());
+                cancelConnectRetry();
                 setConnected(true);
                 JsonListener l = jsonListener.get();
                 if (l != null) l.onReady();
@@ -1553,6 +1621,7 @@ public class WearTakBleClient {
         setupTimeout = null;
         BluetoothGatt closing = bluetoothGatt;
         bluetoothGatt = null;
+        linkUp = false;
         servicesReady = false;
         serviceRefreshGatt = null;
         refreshingServices = refreshAfterOp = false;
@@ -1583,7 +1652,7 @@ public class WearTakBleClient {
         synchronized (rxLock) { rxBuffer.clear(); }
         synchronized (txLock) { txQueue.clear(); txInFlight = false; }
 
-        lastGattCloseMs = android.os.SystemClock.uptimeMillis();
+        if (closing != null) lastGattCloseMs = android.os.SystemClock.uptimeMillis();
         logI("closeGatt(): " + reason);
     }
 
