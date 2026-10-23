@@ -33,6 +33,50 @@ public class GarminConnectIqClientTest {
         assertTrue(client.isConnected());
     }
 
+    @Test public void identitySnapshotsArePerWatchAndNeverUseManagedCallsignAsStandalone() {
+        sdk.known = Arrays.asList(watch, new IQDevice(2, "Other product"));
+        client.start();
+        sdk.lifecycle.onSdkReady();
+        assertEquals(2, client.watchIdentities().size());
+        assertEquals("Watch", client.watchIdentities().get(0).product);
+        assertNull(client.watchIdentities().get(0).callsign);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("callsign", "PHONE");
+        payload.put("phoneManagedSettings", true);
+        Map<String, Object> envelope = new HashMap<>();
+        envelope.put("msgType", "watch_settings");
+        envelope.put("payload", payload);
+        sdk.appListeners.get(1L).onMessageReceived(watch, sdk.app,
+                Collections.singletonList(envelope), ConnectIQ.IQMessageStatus.SUCCESS);
+        assertNull(client.watchIdentities().get(0).callsign);
+        payload.put("standaloneCallsign", " WATCH ");
+        sdk.appListeners.get(1L).onMessageReceived(watch, sdk.app,
+                Collections.singletonList(envelope), ConnectIQ.IQMessageStatus.SUCCESS);
+        assertEquals("WATCH", client.watchIdentities().get(0).callsign);
+        assertNull(client.watchIdentities().get(1).callsign);
+        sdk.deviceListeners.get(1L).onDeviceStatusChanged(watch, IQDevice.IQDeviceStatus.NOT_CONNECTED);
+        assertFalse(client.watchIdentities().get(0).connected);
+        assertEquals("WATCH", client.watchIdentities().get(0).callsign);
+        client.stop();
+        assertTrue(client.watchIdentities().isEmpty());
+    }
+
+    @Test public void standaloneObservationAcceptsOnlyVerifiedStandaloneStrings() throws Exception {
+        JSONObject payload = new JSONObject().put("callsign", "PHONE");
+        JSONObject envelope = new JSONObject().put("msgType", "watch_settings").put("payload", payload);
+        assertNull(GarminConnectIqClient.standaloneIdentity(envelope, null));
+        payload.put("phoneManagedSettings", true);
+        assertEquals("OLD", GarminConnectIqClient.standaloneIdentity(envelope, "OLD"));
+        payload.put("phoneManagedSettings", false);
+        assertEquals("PHONE", GarminConnectIqClient.standaloneIdentity(envelope, "OLD"));
+        payload.put("standaloneCallsign", 42).put("phoneManagedSettings", true);
+        assertEquals("OLD", GarminConnectIqClient.standaloneIdentity(envelope, "OLD"));
+        payload.put("standaloneCallsign", "FULL-WATCH");
+        assertEquals("FULL-WATCH", GarminConnectIqClient.standaloneIdentity(envelope, null));
+        envelope.put("msgType", "pli");
+        assertEquals("OLD", GarminConnectIqClient.standaloneIdentity(envelope, "OLD"));
+    }
+
     @Test public void acknowledgedPauseStopsOnlyOriginalExclusiveReadyLink() {
         connect();
         GarminEntityForwarder.Link original = client.entityLinks().get(0);

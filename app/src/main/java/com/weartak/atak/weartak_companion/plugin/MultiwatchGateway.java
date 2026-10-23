@@ -85,7 +85,7 @@ final class MultiwatchGateway {
         for (String address : new LinkedHashSet<>(prefs.getStringSet("admitted", new LinkedHashSet<>()))) {
             if (peers.size() >= GatewayPolicy.CAP) break;
             Peer peer = new Peer(new WearTakBleClient.DiscoveredDevice(
-                    prefs.getString("name_" + address, "WearTAK"), address, 0));
+                    null, address, 0));
             peer.uid = prefs.getString("uid_" + address, null);
             peer.callsign = prefs.getString("callsign_" + address, null);
             peer.team = prefs.getString("team_" + address, null);
@@ -468,10 +468,17 @@ final class MultiwatchGateway {
         List<Peer> orderedPeers = new ArrayList<>(peers.values());
         orderedPeers.sort((left, right) -> Boolean.compare(right.negotiated, left.negotiated));
         for (Peer peer : orderedPeers) {
-            text(panel, BleDeviceAdapter.watchLabel(context.getResources(),
-                    scanner == null ? peer.device : scanner.withSessionIdentity(peer.device),
-                    BleDeviceAdapter.localCallsign(), peer.callsign)
-                    + " • " + peer.device.address + "\n"
+            WearTakBleClient.DiscoveredDevice latest = discoveries.get(peer.device.address);
+            if (latest == null) latest = peer.device;
+            WearTakBleClient.DiscoveredDevice identity = peer.client != null
+                    ? peer.client.withSessionIdentity(latest) : latest;
+            if (scanner != null) identity = scanner.withSessionIdentity(identity);
+            String watch = identity.standaloneCallsign;
+            if (watch == null || watch.trim().isEmpty()) watch = identity.advertisedCallsign;
+            if (watch == null || watch.trim().isEmpty()) watch = peer.callsign;
+            text(panel, BleDeviceAdapter.identityLines(context.getResources(), null, null,
+                    identity.address, identity.rssi, watch, identity.productName, true)
+                    + "\n"
                     + (peer.callsign == null ? "" : peer.callsign + " • " + peer.uid
                     + (peer.team == null || peer.team.isEmpty() ? "" : " • " + peer.team)
                     + (peer.role == null || peer.role.isEmpty() ? "" : " / " + peer.role) + "\n")
@@ -499,9 +506,10 @@ final class MultiwatchGateway {
         }
         for (WearTakBleClient.DiscoveredDevice device : discoveries.values()) {
             if (peers.containsKey(device.address)) continue;
-            button(panel, "Connect " + BleDeviceAdapter.watchLabel(context.getResources(),
+            text(panel, BleDeviceAdapter.identityLines(context.getResources(),
                     scanner == null ? device : scanner.withSessionIdentity(device),
-                    BleDeviceAdapter.localCallsign()) + "\n" + device.address, () -> select(device))
+                    null, null, true));
+            button(panel, "Connect", () -> select(device))
                     .setEnabled(peers.size() < GatewayPolicy.CAP);
         }
     }
