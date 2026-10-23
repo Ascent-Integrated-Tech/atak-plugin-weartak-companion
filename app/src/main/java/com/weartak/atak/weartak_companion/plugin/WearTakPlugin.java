@@ -125,6 +125,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private Runnable releaseTimeout;
     private static final String KEY_GARMIN_PAUSED = "garmin_connection_paused";
     private final SimulatorDiagnostics simulatorDiagnostics = new SimulatorDiagnostics();
+    private final ReceivedCotTiming receivedCotTiming = new ReceivedCotTiming();
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
@@ -585,9 +586,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         initializeDiagnosticLogger();
         identityObserverActive = true;
         MapView identityMap = MapView.getMapView();
+        receivedCotTiming.start(identityMap);
         phoneIdentityObserver.start(AtakPreferences.getInstance(identityMap.getContext()).getSharedPrefs(),
                 identityMap.getSelfMarker());
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
+        bleCotBridge.setReceivedCotTiming(receivedCotTiming);
         SharedPreferences prefs = systemBondedPreferences();
         setupPurpose = prefs.getBoolean("setup_purpose", false);
         gatewayPurpose = "gateway".equals(prefs.getString("purpose", ""));
@@ -1528,6 +1531,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     public void onStop() {
         runOnMain(() -> {
             identityObserverActive = false;
+            receivedCotTiming.stop();
             phoneIdentityObserver.stop();
             mainHandler.removeCallbacks(liveIdentityUpdate);
             simulatorDiagnostics.stop();
@@ -1720,7 +1724,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             }
                         }
                     }, true);
-            garminEntitySource = new GarminMapEntitySource(MapView.getMapView(), bleCotBridge);
+            garminEntitySource = new GarminMapEntitySource(MapView.getMapView(), bleCotBridge, receivedCotTiming);
             garminEntities = new GarminEntityForwarder(garminEntitySource, owner::entityLinks,
                     runnable -> mainHandler.post(runnable),
                     () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
@@ -2060,7 +2064,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         unregisterMapItemListener();
         if (bleClient == null) return;
         bleCotBridge.setPhoneMarkerPolicy(phoneMarkerPolicy);
-        phoneMarkerRelay = new PhoneMarkerMapRelay(phoneMarkerPolicy, bleClient);
+        phoneMarkerRelay = new PhoneMarkerMapRelay(phoneMarkerPolicy, bleClient, receivedCotTiming);
         phoneMarkerRelay.start(MapView.getMapView());
         phoneUserRelay = new PhoneUserMapRelay(bleClient);
         phoneUserRelay.start(MapView.getMapView());
