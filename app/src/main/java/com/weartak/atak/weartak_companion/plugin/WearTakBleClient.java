@@ -358,6 +358,7 @@ public class WearTakBleClient {
 
     public static class DiscoveredDevice {
         public final String name;
+        public final String callsign;
         public final String advertisedName;
         public final String bondedName;
         public final String address;
@@ -369,7 +370,13 @@ public class WearTakBleClient {
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
                                  String address, int rssi) {
+            this(name, advertisedName, bondedName, address, rssi, null);
+        }
+
+        private DiscoveredDevice(String name, String advertisedName, String bondedName,
+                                 String address, int rssi, String callsign) {
             this.name = name;
+            this.callsign = callsign;
             this.advertisedName = advertisedName;
             this.bondedName = bondedName;
             this.address = address;
@@ -387,13 +394,28 @@ public class WearTakBleClient {
             String bondedName = bonded ? nonBlank(alias) : null;
             if (bonded && bondedName == null) bondedName = nonBlank(cachedName);
             // A cached bonded name may already be the phone-assigned alias, not the original.
-            String name = advertised != null ? advertised : bonded ? null : nonBlank(cachedName);
+            String remoteName = nonBlank(cachedName);
+            if (bonded && (nonBlank(alias) == null || sameName(remoteName, bondedName))) remoteName = null;
+            String name = advertised != null ? advertised : remoteName;
             return new DiscoveredDevice(name, advertised, bondedName, address, rssi);
         }
 
         String distinctBondedName() {
-            return bondedName != null && (name == null || !bondedName.equalsIgnoreCase(name))
+            return bondedName != null && !sameName(bondedName, name)
+                    && !sameName(bondedName, callsign)
                     ? bondedName : null;
+        }
+
+        String primaryName() {
+            return callsign != null ? callsign : name;
+        }
+
+        String secondaryName() {
+            return callsign != null && !sameName(callsign, name) ? name : null;
+        }
+
+        private static boolean sameName(String a, String b) {
+            return a != null && b != null && a.equalsIgnoreCase(b);
         }
 
         private static String nonBlank(String value) {
@@ -404,6 +426,20 @@ public class WearTakBleClient {
             String n = (name != null && !name.isEmpty()) ? name : "Unknown";
             return n + " (" + address + ")";
         }
+    }
+
+    private String sessionWatchCallsign;
+    private long callsignSession = -1;
+
+    synchronized DiscoveredDevice withSessionIdentity(DiscoveredDevice device) {
+        String callsign = null;
+        if (getReadySession() >= 0 && callsignSession == sessionGeneration
+                && device.address != null
+                && device.address.equals(bluetoothGatt.getDevice().getAddress())) {
+            callsign = sessionWatchCallsign;
+        }
+        return new DiscoveredDevice(device.name, device.advertisedName, device.bondedName,
+                device.address, device.rssi, callsign);
     }
 
     public interface ScanListener {
@@ -631,7 +667,9 @@ public class WearTakBleClient {
             try {
                 BluetoothDevice preferred = bluetoothAdapter.getRemoteDevice(preferredAddress);
                 if (isBonded(preferred)) {
-                    listener.onFound(new DiscoveredDevice(safeGetDeviceName(preferred), preferredAddress, 0));
+                    listener.onFound(DiscoveredDevice.fromScan(null, safeGetDeviceName(preferred),
+                            safeGetDeviceAlias(preferred), true, preferredAddress, 0,
+                            discovered.get(preferredAddress)));
                     return;
                 }
             } catch (IllegalArgumentException e) {
@@ -685,7 +723,8 @@ public class WearTakBleClient {
         try {
             BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
             if (!bluetoothAdapter.isEnabled() || device.getBondState() == BluetoothDevice.BOND_BONDED) {
-                return new DiscoveredDevice(safeGetDeviceName(device), address, 0);
+                return DiscoveredDevice.fromScan(null, safeGetDeviceName(device),
+                        safeGetDeviceAlias(device), true, address, 0, discovered.get(address));
             }
             clearPreferredAddressIfMatches(address);
         } catch (IllegalArgumentException | SecurityException e) {
@@ -1590,6 +1629,19 @@ public class WearTakBleClient {
     private void deliverJsonLine(String line, long receiveSession) {
         try {
             JSONObject env = new JSONObject(line);
+            String type = env.optString("msgType");
+            JSONObject identity = env.optJSONObject("payload");
+            if (identity != null && ("watch_info".equals(type)
+                    || "settings_request".equals(type) || "settings_changed".equals(type))) {
+                String key = "watch_info".equals(type) ? "cs" : "callsign";
+                synchronized (this) {
+                    if (receiveSession >= 0 && getReadySession() == receiveSession && !identity.isNull(key)
+                            && identity.has(key)) {
+                        sessionWatchCallsign = DiscoveredDevice.nonBlank(identity.optString(key));
+                        callsignSession = receiveSession;
+                    }
+                }
+            }
             if ("phone_management_ping".equals(env.optString("msgType"))) {
                 if (gatewayOnly || getReadySession() != receiveSession) return;
                 JSONObject response = PhoneManagementHeartbeat.response(env);
@@ -1647,6 +1699,7 @@ public class WearTakBleClient {
     // -------------------- helpers --------------------
 
     private synchronized void closeGattInternal(String reason) {
+        sessionWatchCallsign = null;
         ++sessionGeneration;
         if (setupTimeout != null) main.removeCallbacks(setupTimeout);
         setupTimeout = null;

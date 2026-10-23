@@ -120,12 +120,17 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     static void bindNames(TextView name, TextView bondedName,
                           WearTakBleClient.DiscoveredDevice device) {
-        name.setText(device.name != null && !device.name.isEmpty() ? device.name
+        String primary = device.primaryName();
+        name.setText(primary != null && !primary.isEmpty() ? primary
                 : name.getResources().getString(R.string.watch_name_unavailable));
         String alias = device.distinctBondedName();
-        bondedName.setText(alias == null ? ""
-                : bondedName.getResources().getString(R.string.watch_bonded_as, alias));
-        bondedName.setVisibility(alias == null ? View.GONE : View.VISIBLE);
+        String secondary = device.secondaryName();
+        String bondContext = alias == null ? null
+                : bondedName.getResources().getString(R.string.watch_bonded_as, alias);
+        String details = secondary == null ? bondContext
+                : bondContext == null ? secondary : secondary + "\n" + bondContext;
+        bondedName.setText(details == null ? "" : details);
+        bondedName.setVisibility(details == null ? View.GONE : View.VISIBLE);
     }
 
     static class VH extends RecyclerView.ViewHolder {

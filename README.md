@@ -67,10 +67,17 @@ retried here. A new GATT connection waits 1 s after a previous GATT close and
 The BLE picker preserves the advertised watch name verbatim, including hyphens
 and any `WT-` prefix. A different Android bonded alias is shown beneath it as
 "Bonded as ..."; Android's cached device name supplies that context if no alias
-is available. If a bonded watch has no observed advertised name in the current
-scan, the primary label is "Unknown watch", not a guessed pre-bond name. A nameless
+is available. A remote name distinct from the alias can supply a device label when
+no advertisement name is available. Otherwise the label is "Unknown watch", not
+a guessed pre-bond name. A nameless
 packet retains an earlier advertisement for the same address within that scan.
 Names are display context only; device selection and trust remain address-based.
+After handshake, an observed callsign is primary, with the available advertised/
+remote device label and distinct bonded alias below it. Duplicate fields are
+omitted. Callsigns are bound to the ready peer address and session generation;
+they are not persisted for future scans or borrowed from another watch. These
+labels cannot recover a historical product name that Android/the watch no longer
+exposes, and no product model or callsign is inferred before handshake.
 
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no

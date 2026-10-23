@@ -2,6 +2,7 @@ package com.weartak.atak.weartak_companion.plugin;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
@@ -58,6 +59,13 @@ public class BlePickerIdentityTest {
         assertEquals(ALIAS, d.distinctBondedName());
     }
 
+    @Test public void distinctAndroidRemoteNameIsAvailableWithoutAdvertisement() {
+        WearTakBleClient.DiscoveredDevice d = scan(null, "Galaxy Watch Ultra2 (RK2Z)", ALIAS, true, null);
+        assertEquals("Galaxy Watch Ultra2 (RK2Z)", d.name);
+        assertNull(d.advertisedName);
+        assertEquals(ALIAS, d.distinctBondedName());
+    }
+
     @Test public void whollyUnavailableNamesRemainUnknown() {
         WearTakBleClient.DiscoveredDevice d = scan(" ", null, "", true, null);
         assertNull(d.name);
@@ -109,6 +117,84 @@ public class BlePickerIdentityTest {
         verify(name).setText("Unknown watch");
         verify(alias).setText("");
         verify(alias).setVisibility(View.GONE);
+    }
+
+    @Test public void observedCallsignIsBoundToReadyPeerAndGeneration() throws Exception {
+        WearTakBleClient client = readyClient();
+        WearTakBleClient.DiscoveredDevice device = scan("Galaxy Watch Ultra2 (RK2Z)", ALIAS, ALIAS, true, null);
+        assertNull(client.withSessionIdentity(device).callsign);
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"callsign\":\"ODIN-WEARTAK\"}}", 7);
+        WearTakBleClient.DiscoveredDevice observed = client.withSessionIdentity(device);
+        assertEquals("ODIN-WEARTAK", observed.primaryName());
+        assertEquals("Galaxy Watch Ultra2 (RK2Z)", observed.secondaryName());
+        assertEquals(ALIAS, observed.distinctBondedName());
+        WearTakBleClient.DiscoveredDevice other =
+                new WearTakBleClient.DiscoveredDevice("Other", "00:00:00:00:00:02", -45);
+        assertNull(client.withSessionIdentity(other).callsign);
+
+        set(client, "sessionGeneration", 8L);
+        assertNull(client.withSessionIdentity(observed).callsign);
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"callsign\":\"STALE\"}}", 7);
+        assertNull(client.withSessionIdentity(device).callsign);
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"NEW\"}}", 8);
+        assertEquals("NEW", client.withSessionIdentity(device).callsign);
+        set(client, "connected", false);
+        assertNull(client.withSessionIdentity(device).callsign);
+    }
+
+    @Test public void threeFieldBindingAndRecyclingOmitDuplicatesAndMissingFields() throws Exception {
+        WearTakBleClient client = readyClient();
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"ODIN-WEARTAK\"}}", 7);
+        TextView name = mock(TextView.class);
+        TextView details = mock(TextView.class);
+        Resources resources = mock(Resources.class);
+        when(details.getResources()).thenReturn(resources);
+        when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
+        BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
+                scan("Galaxy Watch Ultra2 (RK2Z)", ALIAS, ALIAS, true, null)));
+        verify(name).setText("ODIN-WEARTAK");
+        verify(details).setText("Galaxy Watch Ultra2 (RK2Z)\nBonded as " + ALIAS);
+        verify(details).setVisibility(View.VISIBLE);
+        clearInvocations(name, details);
+        BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
+                scan("ODIN-WEARTAK", "ODIN-WEARTAK", "odin-weartak", true, null)));
+        verify(name).setText("ODIN-WEARTAK");
+        verify(details).setText("");
+        verify(details).setVisibility(View.GONE);
+        assertNull(client.withSessionIdentity(scan(null, ALIAS, ALIAS, false, null)).distinctBondedName());
+        assertNull(client.withSessionIdentity(scan(null, ALIAS, ALIAS, true, null)).secondaryName());
+    }
+
+    @Test public void sparseIdentityMessagesRetainCallsignAndExplicitEmptyClearsIt() throws Exception {
+        WearTakBleClient client = readyClient();
+        WearTakBleClient.DiscoveredDevice d = scan(ORIGINAL, ALIAS, ALIAS, true, null);
+        receive(client, "{\"msgType\":\"settings_request\",\"payload\":{\"callsign\":\"ODIN\"}}", 7);
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"team\":\"Blue\"}}", 7);
+        assertEquals("ODIN", client.withSessionIdentity(d).callsign);
+        receive(client, "{\"msgType\":\"settings_changed\",\"payload\":{\"callsign\":\"\"}}", 7);
+        assertNull(client.withSessionIdentity(d).callsign);
+        assertEquals(ORIGINAL, client.withSessionIdentity(d).primaryName());
+    }
+
+    private static WearTakBleClient readyClient() throws Exception {
+        WearTakBleClient client = new WearTakBleClient(mock(Context.class), connected -> { });
+        BluetoothDevice peer = mock(BluetoothDevice.class);
+        when(peer.getAddress()).thenReturn(ADDRESS);
+        BluetoothGatt gatt = mock(BluetoothGatt.class);
+        when(gatt.getDevice()).thenReturn(peer);
+        set(client, "bluetoothGatt", gatt);
+        set(client, "connected", true);
+        set(client, "servicesReady", true);
+        set(client, "started", true);
+        set(client, "sessionGeneration", 7L);
+        return client;
+    }
+
+    private static void receive(WearTakBleClient client, String json, long session) throws Exception {
+        java.lang.reflect.Method method = WearTakBleClient.class.getDeclaredMethod(
+                "deliverJsonLine", String.class, long.class);
+        method.setAccessible(true);
+        method.invoke(client, json, session);
     }
 
     @Test public void actualScanCallbackUsesAdvertisementAndKeepsSessionFences() throws Exception {
