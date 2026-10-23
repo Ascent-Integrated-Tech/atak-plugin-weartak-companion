@@ -358,13 +358,46 @@ public class WearTakBleClient {
 
     public static class DiscoveredDevice {
         public final String name;
+        public final String advertisedName;
+        public final String bondedName;
         public final String address;
         public final int rssi;
 
         public DiscoveredDevice(String name, String address, int rssi) {
+            this(name, null, null, address, rssi);
+        }
+
+        private DiscoveredDevice(String name, String advertisedName, String bondedName,
+                                 String address, int rssi) {
             this.name = name;
+            this.advertisedName = advertisedName;
+            this.bondedName = bondedName;
             this.address = address;
             this.rssi = rssi;
+        }
+
+        static DiscoveredDevice fromScan(String advertisedName, String cachedName, String alias,
+                                         boolean bonded, String address, int rssi,
+                                         DiscoveredDevice previous) {
+            String advertised = nonBlank(advertisedName);
+            if (advertised == null && previous != null && address != null
+                    && address.equals(previous.address)) {
+                advertised = previous.advertisedName;
+            }
+            String bondedName = bonded ? nonBlank(alias) : null;
+            if (bonded && bondedName == null) bondedName = nonBlank(cachedName);
+            // A cached bonded name may already be the phone-assigned alias, not the original.
+            String name = advertised != null ? advertised : bonded ? null : nonBlank(cachedName);
+            return new DiscoveredDevice(name, advertised, bondedName, address, rssi);
+        }
+
+        String distinctBondedName() {
+            return bondedName != null && (name == null || !bondedName.equalsIgnoreCase(name))
+                    ? bondedName : null;
+        }
+
+        private static String nonBlank(String value) {
+            return value == null || value.trim().isEmpty() ? null : value.trim();
         }
 
         @Override public String toString() {
@@ -475,56 +508,7 @@ public class WearTakBleClient {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
 
-        activeScanCallback = new ScanCallback() {
-            @Override
-            public void onScanResult(int callbackType, ScanResult result) {
-                main.post(() -> handleResult(result));
-            }
-
-            private void handleResult(ScanResult result) {
-                if (activeScanCallback != this || !scanning || result == null
-                        || result.getDevice() == null) return;
-
-                BluetoothDevice d = result.getDevice();
-                String addr = d.getAddress();
-                if (addr == null) return;
-
-                int rssi = result.getRssi();
-
-                String name = safeGetDeviceName(d);
-                String advName = safeGetAdvName(result);
-
-                boolean hasService = safeHasServiceUuid(result, COMPANION_SERVICE_UUID);
-
-                if (!hasService) return;
-
-                String displayName = (advName != null && !advName.isEmpty()) ? advName : name;
-                if (displayName == null) displayName = "WearTAK";
-                StringBuilder strippedName = new StringBuilder(displayName);
-                String[] parts = displayName.split("-");
-                if (parts.length >= 2) {
-                    strippedName = new StringBuilder(parts[1]);
-                    for (int i = 2; i < parts.length; i++) strippedName.append("-").append(parts[i]);
-                }
-                Log.d(TAG, "SCAN: strippedName=(" + strippedName.toString() + "); displayName=(" + displayName + "); name=(" + name + "); advName=(" + advName + "); strippedName=(" + strippedName +")");
-                DiscoveredDevice dd = new DiscoveredDevice(strippedName.toString(), addr, rssi);
-
-                discovered.put(addr, dd);
-
-                if (listener != null) listener.onDeviceFound(dd);
-                Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
-                        + " displayName=" + displayName + " hasService=" + hasService + " rssi=" + rssi);
-            }
-
-            @Override
-            public void onScanFailed(int errorCode) {
-                main.post(() -> {
-                    if (activeScanCallback != this) return;
-                    stopScanInternal("scan failed");
-                    if (listener != null) listener.onScanError("Scan failed: " + errorCode);
-                });
-            }
-        };
+        activeScanCallback = createScanCallback(listener);
 
         try {
             scanner.startScan(null, settings, activeScanCallback);
@@ -548,6 +532,53 @@ public class WearTakBleClient {
             if (listener != null) listener.onScanFinished(out);
         };
         main.postDelayed(scanTimeoutRunnable, Math.max(1, timeoutSeconds) * 1000L);
+    }
+
+    ScanCallback createScanCallback(ScanListener listener) {
+        return new ScanCallback() {
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                main.post(() -> handleResult(result));
+            }
+
+            private void handleResult(ScanResult result) {
+                if (activeScanCallback != this || !scanning || result == null
+                        || result.getDevice() == null) return;
+
+                BluetoothDevice d = result.getDevice();
+                String addr = d.getAddress();
+                if (addr == null) return;
+
+                int rssi = result.getRssi();
+
+                String name = safeGetDeviceName(d);
+                String advName = safeGetAdvName(result);
+
+                boolean hasService = safeHasServiceUuid(result, COMPANION_SERVICE_UUID);
+
+                if (!hasService) return;
+
+                boolean bonded = isBonded(d);
+                DiscoveredDevice dd = DiscoveredDevice.fromScan(advName, name,
+                        bonded ? safeGetDeviceAlias(d) : null, bonded, addr, rssi,
+                        discovered.get(addr));
+
+                discovered.put(addr, dd);
+
+                if (listener != null) listener.onDeviceFound(dd);
+                Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
+                        + " displayName=" + dd.name + " hasService=" + hasService + " rssi=" + rssi);
+            }
+
+            @Override
+            public void onScanFailed(int errorCode) {
+                main.post(() -> {
+                    if (activeScanCallback != this) return;
+                    stopScanInternal("scan failed");
+                    if (listener != null) listener.onScanError("Scan failed: " + errorCode);
+                });
+            }
+        };
     }
 
     private synchronized void clearScanTimeout() {

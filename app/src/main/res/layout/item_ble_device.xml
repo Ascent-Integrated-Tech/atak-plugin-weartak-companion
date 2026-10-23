@@ -21,6 +21,18 @@
         app:layout_constraintEnd_toStartOf="@id/actionRow" />
 
     <TextView
+        android:id="@+id/deviceBondedName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/deviceName"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/actionRow" />
+
+    <TextView
         android:id="@+id/deviceMac"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -29,7 +41,7 @@
         android:alpha="0.8"
         android:maxLines="1"
         android:ellipsize="end"
-        app:layout_constraintTop_toBottomOf="@id/deviceName"
+        app:layout_constraintTop_toBottomOf="@id/deviceBondedName"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/actionRow" />
 
