@@ -26,6 +26,10 @@ RELEASE_TAG = "tak-gov-ci-cd-pipeline"
 RELEASE_TITLE = "TAK.gov CI/CD Pipeline Release"
 ASSET_PREFIX = "WearTAK-ATAK-Plugin-civ-release-pipeline-"
 VERSIONED_ASSET_PREFIX = "WearTAK-Companion-"
+MANAGED_ASSET_NAME = re.compile(
+    r"(?:" + re.escape(VERSIONED_ASSET_PREFIX) + r"[0-9]+(?:\.[0-9]+)+-p[0-9]+"
+    + r"|" + re.escape(ASSET_PREFIX) + r"[0-9]+)\.apk\Z"
+)
 RELEASE_OWNERSHIP_MARKER = "<!-- weartak-companion-rolling-release:managed -->"
 RELEASE_END_MARKER = "<!-- /weartak-companion-rolling-release:managed -->"
 RELEASE_TITLE_PREFIX = "TAK.gov Forge CI/CD Pipeline Release"
@@ -385,8 +389,11 @@ def verify_signer(apk: Path) -> None:
 
 def verify_release_order(release: dict[str, Any], pipeline_id: str) -> None:
     previous_body = str(release.get("body", ""))
-    match = re.search(r"(?m)^- Pipeline: \[#([0-9]+)\]", previous_body)
-    if match and int(match.group(1)) > int(pipeline_id):
+    matches = re.findall(
+        r"(?m)^- Pipeline: \[#([0-9]+)\]|^- Build: GitLab pipeline \*\*([0-9]+)\*\*",
+        previous_body,
+    )
+    if matches and max(int(a or b) for a, b in matches) > int(pipeline_id):
         raise PublishError(
             f"Skipping stale pipeline {pipeline_id}; a newer pipeline is already published"
         )
@@ -403,7 +410,7 @@ def verify_source_pipeline(gitlab: GitLabClient, env: dict[str, str]) -> None:
 
 
 def release_description(
-    asset_url: str, pipeline_id: str, commit_sha: str, apk_version: str, checksum: str,
+    pipeline_id: str, commit_sha: str, apk_version: str, checksum: str,
     version_code: str, pipeline_iid: str | None = None,
 ) -> str:
     pipeline_url = (
@@ -416,17 +423,16 @@ def release_description(
             "",
             "Automatically published stable ATAK Companion CIV develop-channel build.",
             "",
-            f"- APK version: `{apk_version}` (versionCode `{version_code}`)",
-            f"- Build: GitLab pipeline `{pipeline_id}`"
-            + (f" (project pipeline IID `{pipeline_iid}`)" if pipeline_iid else ""),
-            f"- Pipeline: [#{pipeline_id}]({pipeline_url})",
-            f"- Source commit: [`{commit_sha}`](https://git.tak.gov/aegorsuch/atak-plugin-weartak-companion/-/commit/{commit_sha}) on TAK.gov `develop`",
-            f"- SHA-256: `{checksum}`",
+            f"- APK version: **{apk_version}** (versionCode **{version_code}**)",
+            f"- Build: GitLab pipeline **{pipeline_id}**"
+            + (f" (project pipeline **{pipeline_iid}**)" if pipeline_iid else ""),
+            f"- Pipeline: {pipeline_url}",
+            f"- Source commit: `{commit_sha}` on TAK.gov `develop`",
+            f"- SHA256: `{checksum}`",
             "",
-            f"[Download APK]({asset_url})",
-            "",
-            "GitHub **Source code** archives use the fixed anchor tag; "
-            "the source SHA above is authoritative.",
+            "Install the APK above. GitHub's \"Source code\" archives come from the fixed "
+            "release anchor tag, not from this build; the source commit above is "
+            "authoritative and may not yet be mirrored to GitHub.",
             RELEASE_END_MARKER,
         ]
     )
@@ -441,7 +447,7 @@ def merge_release_description(previous: str, generated: str) -> str:
         end += len(RELEASE_END_MARKER)
     else:
         # Legacy publisher notes ended at the checksum; keep any manual suffix.
-        checksum = re.search(r"(?m)^- SHA-256: `[0-9a-f]{64}`[ \t]*", previous[start:])
+        checksum = re.search(r"(?m)^- SHA-?256: `[0-9a-f]{64}`[ \t]*", previous[start:])
         end = start + checksum.end() if checksum else start + len(RELEASE_OWNERSHIP_MARKER)
     return previous[:start] + generated + previous[end:]
 
@@ -457,7 +463,10 @@ def managed_asset_checksum(asset: dict[str, Any]) -> str | None:
     legacy = re.fullmatch(re.escape(ASSET_LABEL_PREFIX) + r"([0-9a-f]{64})", label)
     if legacy:
         return legacy.group(1)
-    if label == ASSET_DISPLAY_LABEL:
+    if label == ASSET_DISPLAY_LABEL or (
+        label == asset.get("name")
+        and MANAGED_ASSET_NAME.fullmatch(label)
+    ):
         digest = re.fullmatch(r"sha256:([0-9a-f]{64})", str(asset.get("digest", "")))
         if digest:
             return digest.group(1)
@@ -517,7 +526,7 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
         if current_asset is not None:
             # Retrying an old pipeline must preserve its already-linked download URL.
             asset_name = legacy_name
-    asset_label = ASSET_DISPLAY_LABEL
+    asset_label = asset_name
     if current_asset is not None:
         if managed_asset_checksum(current_asset) != checksum:
             raise PublishError("An asset with this pipeline name is not marked as publisher-owned")
@@ -537,7 +546,6 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
             raise PublishError("Uploaded APK contents do not match the signed pipeline artifact")
 
     description = release_description(
-        current_asset["browser_download_url"],
         pipeline_id,
         env["CI_COMMIT_SHA"],
         version_name,
@@ -549,14 +557,11 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
     github.update_release_body(release_id, description, title)
     github.dispatch_release_test(release_id, pipeline_id, description)
 
-    managed_asset = re.compile(
-        re.escape(VERSIONED_ASSET_PREFIX) + r"[0-9]+(?:\.[0-9]+)+-p[0-9]+\.apk\Z"
-    )
     if previous_release_owned:
         for asset in assets:
             if asset.get("id") == current_asset.get("id"):
                 continue
-            if not managed_asset.fullmatch(str(asset.get("name", ""))):
+            if not MANAGED_ASSET_NAME.fullmatch(str(asset.get("name", ""))):
                 continue
             old_checksum = managed_asset_checksum(asset)
             if old_checksum is None:

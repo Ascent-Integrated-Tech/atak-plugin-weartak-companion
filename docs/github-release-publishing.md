@@ -16,18 +16,19 @@ GitHub behavior.
 
 The rolling release uses the fixed tag `tak-gov-ci-cd-pipeline`. Each asset is
 named `WearTAK-Companion-<version>-p<project-pipeline-IID>.apk`; the release
-description links to the current asset and includes its source commit, pipeline,
+page offers it in the native Assets section. Its notes include source commit, pipeline,
 manifest versionName/versionCode, and SHA-256. The versioned Forge release title
 uses the plugin version and project pipeline IID. The IID is required, and the
 distributable version must match the signed manifest versionName's version prefix.
-The notes distinguish both pipeline identifiers, link to canonical
-TAK.gov source, and explain that GitHub Source code archives use a fixed anchor
+The notes match the watch layout: bold manifest version/code and build identifiers,
+plain canonical pipeline URL, full source SHA in code style, and a separate checksum.
+They explain that GitHub Source code archives use a fixed anchor
 tag rather than the authoritative source SHA. Generated notes sit between hidden
 ownership markers; manual content outside that block is preserved, including when
 migrating the legacy notes that ended at the checksum line.
 
-Each managed APK has the readable display label
-"Download signed WearTAK Companion APK"; its checksum is stored separately in
+Each managed APK uses its filename as the native display label, matching the watch
+release. Its checksum is stored separately in
 GitHub's asset digest and the release description. The description includes an ownership
 marker. The new asset is uploaded and downloaded for a byte-for-byte
 verification before the release description changes. Cleanup requires that the
@@ -37,10 +38,13 @@ SHA-256 digest. Legacy `WearTAK Companion managed APK sha256=...` labels are
 also recognized using their embedded hash; a verified same-pipeline legacy asset
 can be relabeled in place without re-uploading its bytes. Unlabeled, mismatched,
 or otherwise unverifiable assets are retained.
-Legacy `WearTAK-ATAK-Plugin-civ-release-pipeline-<pipeline-id>.apk` assets are
-retained so previously shared URLs remain usable. A retry of an already published
-legacy pipeline reuses its original asset/URL; it does not rename or duplicate it.
-Cleanup applies only to the new versioned filename namespace. An existing asset
+The rolling page keeps only the current publisher-owned APK; superseded verified
+assets in both the legacy long pipeline-name and versioned namespaces are removed.
+Legacy hash labels and the former readable download label are recognized during
+migration, but manual/unverifiable assets remain untouched. The one-time live
+migration backed up both old APK bytes and metadata before removing extra assets.
+A retry of an already published legacy pipeline reuses its original asset/URL
+rather than duplicating it. An existing asset
 with the same version/IID but different bytes is rejected, never replaced.
 Other release assets and every separately tagged release are left untouched. A
 failed upload or verification leaves the existing release description and APK
