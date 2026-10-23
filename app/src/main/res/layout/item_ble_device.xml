@@ -14,8 +14,7 @@
         android:text="WT-WEAROS-1075"
         android:textStyle="bold"
         android:textSize="14sp"
-        android:maxLines="1"
-        android:ellipsize="end"
+        android:singleLine="false"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/actionRow" />

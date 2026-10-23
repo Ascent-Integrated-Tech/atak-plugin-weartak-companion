@@ -313,11 +313,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         // Defensive: if you haven't updated item_ble_device.xml yet,
         // disconnectButton may not exist. Fail softly.
         if (name != null && bondedName != null) BleDeviceAdapter.bindNames(name, bondedName,
-                bleClient != null ? bleClient.withSessionIdentity(d) : d);
-        if (mac != null) mac.setText(d.address != null ? d.address : "—");
-        if (rssi != null) rssi.setText(""); // avoid stale RSSI; can show last known if you want
-        if (state != null) state.setText(managementRelease.isPending()
-                ? "Confirming unlock…" : singleWatchConnectionStatus());
+                bleClient != null ? bleClient.withSessionIdentity(d) : d, panelStatusText());
+        if (mac != null) mac.setVisibility(View.GONE);
+        if (rssi != null) rssi.setVisibility(View.GONE);
+        if (state != null) state.setVisibility(View.GONE);
 
         if (disconnect != null) {
             disconnect.setVisibility(View.GONE);
@@ -1136,12 +1135,26 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 setupPurpose && systemBondedConnection.getState() == SystemBondedWatchConnection.State.CONNECTED
                         && bleClient != null && bleClient.isConnected());
         systemBondedSettingsButton.setAlpha(systemBondedSettingsButton.isEnabled() ? 1f : 0.4f);
+        refreshIdentityStatus();
     }
 
     private void setConnectionStatus(String status) {
         if (connectionStatusTV == null) return;
         connectionStatusTV.setText("CONNECTED".equals(status) ? singleWatchConnectionStatus() : status);
         styleConnectionStatus(connectionStatusTV);
+        refreshIdentityStatus();
+    }
+
+    private String panelStatusText() {
+        TextView chip = connectionModes.getMode() == ConnectionModeController.Mode.SAMSUNG
+                ? systemBondedWatchStatus : connectionStatusTV;
+        return chip == null || chip.getText() == null ? null : chip.getText().toString();
+    }
+
+    private void refreshIdentityStatus() {
+        if (deviceAdapter != null) deviceAdapter.setPanelStatus(panelStatusText());
+        if (connectedCardView != null && selectedDevice != null)
+            bindConnectedCard(connectedCardView, selectedDevice);
     }
 
     private String singleWatchConnectionStatus() {
@@ -2230,6 +2243,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void refreshDeviceListUi() {
         if (deviceAdapter == null) return;
+        deviceAdapter.setPanelStatus(panelStatusText());
         deviceAdapter.setDevices(ScanDeviceList.visibleRows(scannedDevices, currentConnectedAddress,
                 bleClient != null && bleClient.isConnected(), this::loadPreferredAddress));
     }

@@ -105,20 +105,22 @@ public class BlePickerIdentityTest {
     @Test public void actualRowBindingShowsAliasAndClearsItOnReuse() {
         TextView name = mock(TextView.class);
         TextView alias = mock(TextView.class);
-        Resources resources = mock(Resources.class);
+        Resources resources = identityResources();
         when(name.getResources()).thenReturn(resources);
         when(alias.getResources()).thenReturn(resources);
         when(resources.getString(R.string.watch_name_unavailable)).thenReturn("Unknown watch");
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
 
         BleDeviceAdapter.bindNames(name, alias, scan(ORIGINAL, ALIAS, ALIAS, true, null));
-        verify(name).setText(ALIAS);
+        verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
+                "Unavailable", ALIAS));
         verify(alias).setText("");
         verify(alias).setVisibility(View.GONE);
         clearInvocations(name, alias);
 
         BleDeviceAdapter.bindNames(name, alias, scan(null, null, null, true, null));
-        verify(name).setText(ADDRESS);
+        verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
+                "Unavailable", "Unavailable"));
         verify(alias).setText("");
         verify(alias).setVisibility(View.GONE);
     }
@@ -151,19 +153,21 @@ public class BlePickerIdentityTest {
         receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"ODIN-WEARTAK\"}}", 7);
         TextView name = mock(TextView.class);
         TextView details = mock(TextView.class);
-        Resources resources = mock(Resources.class);
+        Resources resources = identityResources();
         when(name.getResources()).thenReturn(resources);
         when(details.getResources()).thenReturn(resources);
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("Galaxy Watch Ultra2 (RK2Z)", ALIAS, ALIAS, true, null)));
-        verify(name).setText("ODIN-WEARTAK, " + ALIAS);
+        verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
+                "ODIN-WEARTAK", ALIAS));
         verify(details).setText("");
         verify(details).setVisibility(View.GONE);
         clearInvocations(name, details);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("ODIN-WEARTAK", "ODIN-WEARTAK", "odin-weartak", true, null)));
-        verify(name).setText("ODIN-WEARTAK");
+        verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
+                "ODIN-WEARTAK", "ODIN-WEARTAK"));
         verify(details).setText("");
         verify(details).setVisibility(View.GONE);
         assertNull(client.withSessionIdentity(scan(null, ALIAS, ALIAS, false, null)).distinctBondedName());
@@ -292,12 +296,13 @@ public class BlePickerIdentityTest {
         WearTakBleClient.DiscoveredDevice device = scan(ORIGINAL, ALIAS, ALIAS, true, null);
         TextView name = mock(TextView.class);
         TextView details = mock(TextView.class);
-        Resources resources = mock(Resources.class);
+        Resources resources = identityResources();
         when(name.getResources()).thenReturn(resources);
         when(details.getResources()).thenReturn(resources);
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(device));
-        verify(name).setText("SCAN, " + ALIAS);
+        verify(name).setText(expectedIdentity("Unavailable", "Unavailable", ADDRESS, "-56 dBm",
+                "SCAN", ALIAS));
         verify(details).setText("");
         receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"FULL-CALLSIGN\"}}", 7);
         assertEquals("FULL-CALLSIGN", client.withSessionIdentity(device).primaryName());
@@ -309,7 +314,7 @@ public class BlePickerIdentityTest {
         WearTakBleClient client = readyClient();
         receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"WEAROS-6558\"}}", 7);
         String product = "Galaxy Watch Ultra 2 (RK2Z)";
-        Resources resources = mock(Resources.class);
+        Resources resources = identityResources();
         when(resources.getString(eq(R.string.watch_identity_bonded), any(), any()))
                 .thenAnswer(i -> i.getArgument(1) + " (bonded as " + i.getArgument(2) + ")");
         WearTakBleClient.DiscoveredDevice bonded = client.withSessionIdentity(
@@ -348,28 +353,63 @@ public class BlePickerIdentityTest {
             com.atakmap.android.maps.MapView.setTestCallsign("ODIN-ATAK-S9FE");
             TextView name = mock(TextView.class);
             TextView details = mock(TextView.class);
-            Resources resources = mock(Resources.class);
+            Resources resources = identityResources();
             when(name.getResources()).thenReturn(resources);
             when(resources.getString(eq(R.string.watch_identity_bonded), any(), any()))
                     .thenAnswer(i -> i.getArgument(1) + " (bonded as " + i.getArgument(2) + ")");
             WearTakBleClient client = readyClient();
             receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"WEAROS-6558\"}}", 7);
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
-                    scan(null, "Galaxy Watch Ultra 2 (RK2Z)", "WRONG-ALIAS", true, null)));
-            verify(name).setText("WEAROS-6558, Galaxy Watch Ultra 2 (RK2Z) (bonded as ODIN-ATAK-S9FE)");
+                    scan(null, "Galaxy Watch Ultra 2 (RK2Z)", "WRONG-ALIAS", true, null)), "CONNECTED");
+            verify(name).setText(expectedIdentity("ODIN-ATAK-S9FE", "CONNECTED", ADDRESS, "-56 dBm",
+                    "WEAROS-6558", "Galaxy Watch Ultra 2 (RK2Z)"));
             com.atakmap.android.maps.MapView.setTestCallsign("NEW-EUD");
             clearInvocations(name);
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
-                    scan(null, null, null, true, null)));
-            verify(name).setText("WEAROS-6558 (bonded as NEW-EUD)");
+                    scan(null, null, null, true, null)), "CONNECTED - SYNCING");
+            verify(name).setText(expectedIdentity("NEW-EUD", "CONNECTED - SYNCING", ADDRESS, "-56 dBm",
+                    "WEAROS-6558", "Unavailable"));
             clearInvocations(name);
             BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
-                    scan(null, null, "WRONG-ALIAS", false, null)));
-            verify(name).setText("WEAROS-6558");
+                    scan(null, null, "WRONG-ALIAS", false, null)), "NOT CONNECTED");
+            verify(name).setText(expectedIdentity("NEW-EUD", "NOT CONNECTED", ADDRESS, "-56 dBm",
+                    "WEAROS-6558", "Unavailable"));
             verify(details, times(3)).setVisibility(View.GONE);
         } finally {
             com.atakmap.android.maps.MapView.setTestContext(null);
         }
+    }
+
+    private static Resources identityResources() {
+        Resources resources = mock(Resources.class);
+        when(resources.getString(R.string.watch_identity_unavailable)).thenReturn("Unavailable");
+        when(resources.getString(eq(R.string.watch_identity_dbm), any()))
+                .thenAnswer(i -> i.getArgument(1) + " dBm");
+        when(resources.getString(eq(R.string.watch_identity_lines),
+                any(), any(), any(), any(), any(), any())).thenAnswer(i -> expectedIdentity(
+                        i.getArgument(1), i.getArgument(2), i.getArgument(3),
+                        i.getArgument(4), i.getArgument(5), i.getArgument(6)));
+        return resources;
+    }
+
+    private static String expectedIdentity(String local, String status, String address,
+                                           String strength, String watch, String product) {
+        return "ATAK Callsign: " + local + " (" + status + ")\nBluetooth Address: " + address
+                + "\nBluetooth Strength: " + strength + "\nWearTAK Callsign: " + watch
+                + "\nWearTAK Product Name: " + product;
+    }
+
+    @Test public void fiveAlphabeticalLabelsNeverSubstituteProductOrAliasForMissingCallsign() {
+        Resources resources = identityResources();
+        WearTakBleClient.DiscoveredDevice device = WearTakBleClient.DiscoveredDevice.fromScan(
+                "OLD-ADVERTISEMENT", "Galaxy Watch", "WRONG-ALIAS", true, ADDRESS, -52, null);
+        assertEquals(expectedIdentity("ODIN-ATAK", "Bonded", ADDRESS, "-52 dBm",
+                "Unavailable", "Galaxy Watch"),
+                BleDeviceAdapter.identityLines(resources, device, "ODIN-ATAK", "Bonded"));
+        assertEquals(expectedIdentity("Unavailable", "Disconnected", "Unavailable", "Unavailable",
+                "Unavailable", "Unavailable"),
+                BleDeviceAdapter.identityLines(resources,
+                        new WearTakBleClient.DiscoveredDevice(null, null, 0), null, "Disconnected"));
     }
 
     @Test public void selectedAndRestoredRowsRefreshProductAndBondWithoutUsingAlias() throws Exception {
