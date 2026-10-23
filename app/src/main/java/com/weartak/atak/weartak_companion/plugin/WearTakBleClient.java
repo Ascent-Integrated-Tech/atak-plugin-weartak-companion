@@ -30,6 +30,9 @@ import androidx.core.app.ActivityCompat;
 
 import org.json.JSONObject;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -148,6 +151,8 @@ public class WearTakBleClient {
             });
 
     private final LinkedHashMap<String, DiscoveredDevice> discovered = new LinkedHashMap<>();
+    // Scan responses are not present in every result; retain identity across scans/resets.
+    private final LinkedHashMap<String, String> advertisedCallsigns = new LinkedHashMap<>();
 
     private ScanCallback activeScanCallback = null;
     private Runnable scanTimeoutRunnable = null;
@@ -359,6 +364,7 @@ public class WearTakBleClient {
     public static class DiscoveredDevice {
         public final String name;
         public final String callsign;
+        public final String advertisedCallsign;
         public final String advertisedName;
         public final String bondedName;
         public final String address;
@@ -370,13 +376,14 @@ public class WearTakBleClient {
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
                                  String address, int rssi) {
-            this(name, advertisedName, bondedName, address, rssi, null);
+            this(name, advertisedName, bondedName, address, rssi, null, null);
         }
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
-                                 String address, int rssi, String callsign) {
+                                 String address, int rssi, String callsign, String advertisedCallsign) {
             this.name = name;
             this.callsign = callsign;
+            this.advertisedCallsign = advertisedCallsign;
             this.advertisedName = advertisedName;
             this.bondedName = bondedName;
             this.address = address;
@@ -402,16 +409,19 @@ public class WearTakBleClient {
 
         String distinctBondedName() {
             return bondedName != null && !sameName(bondedName, name)
-                    && !sameName(bondedName, callsign)
+                    && !sameName(bondedName, primaryName())
                     ? bondedName : null;
         }
 
         String primaryName() {
-            return callsign != null ? callsign : name;
+            if (callsign != null) return callsign;
+            if (advertisedCallsign != null) return advertisedCallsign;
+            if (nonBlank(name) != null) return name;
+            return bondedName != null ? bondedName : address;
         }
 
         String secondaryName() {
-            return callsign != null && !sameName(callsign, name) ? name : null;
+            return name != null && !sameName(primaryName(), name) ? name : null;
         }
 
         private static boolean sameName(String a, String b) {
@@ -423,8 +433,24 @@ public class WearTakBleClient {
         }
 
         @Override public String toString() {
-            String n = (name != null && !name.isEmpty()) ? name : "Unknown";
+            String n = primaryName() != null ? primaryName() : "Unknown";
             return n + " (" + address + ")";
+        }
+    }
+
+    static String parseAdvertisedCallsign(byte[] serviceData) {
+        if (serviceData == null || serviceData.length < 1 || serviceData.length > 13
+                || serviceData[0] != 1) return null;
+        try {
+            String value = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(serviceData, 1, serviceData.length - 1)).toString();
+            if (value.codePoints().allMatch(c -> Character.isWhitespace(c) || Character.isSpaceChar(c)))
+                return null;
+            return DiscoveredDevice.nonBlank(value);
+        } catch (CharacterCodingException e) {
+            return null;
         }
     }
 
@@ -439,7 +465,9 @@ public class WearTakBleClient {
             callsign = sessionWatchCallsign;
         }
         return new DiscoveredDevice(device.name, device.advertisedName, device.bondedName,
-                device.address, device.rssi, callsign);
+                device.address, device.rssi, callsign,
+                advertisedCallsigns.containsKey(device.address)
+                        ? advertisedCallsigns.get(device.address) : device.advertisedCallsign);
     }
 
     public interface ScanListener {
@@ -591,19 +619,28 @@ public class WearTakBleClient {
                 String advName = safeGetAdvName(result);
 
                 boolean hasService = safeHasServiceUuid(result, COMPANION_SERVICE_UUID);
+                byte[] serviceData = result.getScanRecord() == null ? null
+                        : result.getScanRecord().getServiceData(new ParcelUuid(COMPANION_SERVICE_UUID));
 
-                if (!hasService) return;
+                if (!hasService && serviceData == null) return;
+
+                if (serviceData != null) {
+                    String callsign = parseAdvertisedCallsign(serviceData);
+                    advertisedCallsigns.put(addr, callsign);
+                    if (callsign == null)
+                        Log.d(TAG, "SCAN: A11A callsign unavailable or invalid for " + addr);
+                }
 
                 boolean bonded = isBonded(d);
-                DiscoveredDevice dd = DiscoveredDevice.fromScan(advName, name,
+                DiscoveredDevice dd = withSessionIdentity(DiscoveredDevice.fromScan(advName, name,
                         bonded ? safeGetDeviceAlias(d) : null, bonded, addr, rssi,
-                        discovered.get(addr));
+                        discovered.get(addr)));
 
                 discovered.put(addr, dd);
 
                 if (listener != null) listener.onDeviceFound(dd);
                 Log.d(TAG, "SCAN: addr=" + addr + " name=" + name + " advName=" + advName
-                        + " displayName=" + dd.name + " hasService=" + hasService + " rssi=" + rssi);
+                        + " displayName=" + dd.primaryName() + " hasService=" + hasService + " rssi=" + rssi);
             }
 
             @Override
@@ -667,9 +704,9 @@ public class WearTakBleClient {
             try {
                 BluetoothDevice preferred = bluetoothAdapter.getRemoteDevice(preferredAddress);
                 if (isBonded(preferred)) {
-                    listener.onFound(DiscoveredDevice.fromScan(null, safeGetDeviceName(preferred),
+                    listener.onFound(withSessionIdentity(DiscoveredDevice.fromScan(null, safeGetDeviceName(preferred),
                             safeGetDeviceAlias(preferred), true, preferredAddress, 0,
-                            discovered.get(preferredAddress)));
+                            discovered.get(preferredAddress))));
                     return;
                 }
             } catch (IllegalArgumentException e) {
@@ -723,8 +760,8 @@ public class WearTakBleClient {
         try {
             BluetoothDevice device = bluetoothAdapter.getRemoteDevice(address);
             if (!bluetoothAdapter.isEnabled() || device.getBondState() == BluetoothDevice.BOND_BONDED) {
-                return DiscoveredDevice.fromScan(null, safeGetDeviceName(device),
-                        safeGetDeviceAlias(device), true, address, 0, discovered.get(address));
+                return withSessionIdentity(DiscoveredDevice.fromScan(null, safeGetDeviceName(device),
+                        safeGetDeviceAlias(device), true, address, 0, discovered.get(address)));
             }
             clearPreferredAddressIfMatches(address);
         } catch (IllegalArgumentException | SecurityException e) {

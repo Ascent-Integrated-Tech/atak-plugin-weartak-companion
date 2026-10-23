@@ -68,16 +68,29 @@ The BLE picker preserves the advertised watch name verbatim, including hyphens
 and any `WT-` prefix. A different Android bonded alias is shown beneath it as
 "Bonded as ..."; Android's cached device name supplies that context if no alias
 is available. A remote name distinct from the alias can supply a device label when
-no advertisement name is available. Otherwise the label is "Unknown watch", not
-a guessed pre-bond name. A nameless
+no advertisement name is available. Otherwise the Android bonded name, then the
+address is used, not a guessed pre-bond name. A nameless
 packet retains an earlier advertisement for the same address within that scan.
 Names are display context only; device selection and trust remain address-based.
-After handshake, an observed callsign is primary, with the available advertised/
+WEARTAK-269: A11A service data in the scan response supplies the watch's chosen
+WearTAK callsign before connection: byte 0 is version 1, followed by 0..12 UTF-8
+bytes, truncated by the watch at a complete code point. Only version 1 and strict,
+nonblank UTF-8 within that limit are accepted. Both A11A service-UUID advertisements
+and A11A service-data-only responses are recognized. A valid callsign is the primary
+scan label; missing/invalid/unknown-version data falls back to the device name,
+then address. The last advertised callsign is cached by address for this client
+run (including new scans and connection resets) so primary-only packets do not
+erase it. A present empty, invalid or unsupported payload clears that address's
+advertised callsign; a new valid payload replaces it. Scan, selected, bonded and
+gateway watch labels use this identity, with the address still shown separately.
+No Bluetooth name or system settings are changed; advertised labels do not prove trust.
+After handshake, an observed full callsign is primary, with the available advertised/
 remote device label and distinct bonded alias below it. Duplicate fields are
 omitted. Callsigns are bound to the ready peer address and session generation;
-they are not persisted for future scans or borrowed from another watch. These
+they are not persisted for future scans or borrowed from another watch. The
+separate advertised callsign is not persisted across plugin restart. These
 labels cannot recover a historical product name that Android/the watch no longer
-exposes, and no product model or callsign is inferred before handshake.
+exposes, and no product model or callsign is inferred from device names.
 
 Setup errors clear the device row's Connecting state even if transport readiness
 was never reached. No bond is created/removed by service-change recovery and no

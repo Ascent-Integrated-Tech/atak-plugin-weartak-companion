@@ -38,8 +38,8 @@ final class ScanDeviceList {
             if (aPref != bPref) return aPref ? -1 : 1;
 
             // 3) name then address (stable)
-            String an = a.name == null ? "" : a.name;
-            String bn = b.name == null ? "" : b.name;
+            String an = a.primaryName() == null ? "" : a.primaryName();
+            String bn = b.primaryName() == null ? "" : b.primaryName();
             int c = an.compareToIgnoreCase(bn);
             if (c != 0) return c;
             return a.address.compareToIgnoreCase(b.address);

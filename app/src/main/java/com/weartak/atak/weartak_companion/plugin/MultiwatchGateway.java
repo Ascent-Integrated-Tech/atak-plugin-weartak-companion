@@ -459,7 +459,8 @@ final class MultiwatchGateway {
         List<Peer> orderedPeers = new ArrayList<>(peers.values());
         orderedPeers.sort((left, right) -> Boolean.compare(right.negotiated, left.negotiated));
         for (Peer peer : orderedPeers) {
-            text(panel, peer.device.name + " • " + peer.device.address + "\n"
+            text(panel, (scanner == null ? peer.device : scanner.withSessionIdentity(peer.device)).primaryName()
+                    + " • " + peer.device.address + "\n"
                     + (peer.callsign == null ? "" : peer.callsign + " • " + peer.uid
                     + (peer.team == null || peer.team.isEmpty() ? "" : " • " + peer.team)
                     + (peer.role == null || peer.role.isEmpty() ? "" : " / " + peer.role) + "\n")
@@ -487,7 +488,7 @@ final class MultiwatchGateway {
         }
         for (WearTakBleClient.DiscoveredDevice device : discoveries.values()) {
             if (peers.containsKey(device.address)) continue;
-            button(panel, "Connect " + device.name + "\n" + device.address, () -> select(device))
+            button(panel, "Connect " + device.primaryName() + "\n" + device.address, () -> select(device))
                     .setEnabled(peers.size() < GatewayPolicy.CAP);
         }
     }
