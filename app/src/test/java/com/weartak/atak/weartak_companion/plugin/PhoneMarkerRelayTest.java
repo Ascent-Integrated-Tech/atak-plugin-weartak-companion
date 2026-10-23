@@ -153,15 +153,39 @@ public class PhoneMarkerRelayTest {
         assertEquals(XML, envelope.getJSONObject("payload").getString("cot"));
     }
 
-    @Test public void onlyWatchSupportedPointTypesPass() {
-        for (String type : new String[]{"a-f-G", "a-u-G", "a-h-G", "a-n-G", "b-m-p-s-p-i"}) {
+    @Test public void allGenericAtomsAndSpiPassTheTypeGate() {
+        for (String type : new String[]{"a-f-G", "a-u-G", "a-h-G", "a-n-G", "b-m-p-s-p-i",
+                "a-h-A-C-F", "a-f-A-C-H", "a-u-A-M-F-Q", "a-n-S", "a-h-G-U-C-I-I",
+                "a-f-G-U-C", "a-f-G-E-V", "a-s-G", "a-f-G-extra"}) {
             assertTrue(PhoneMarkerRelay.supportedType(type));
         }
-        for (String type : new String[]{"a-f-G-U-C", "a-f-G-E-V", "b-a", "u-d-f", "b-m-r",
-                "b-t-f", "t-x-d-d", "", "a-f-G-extra"}) {
+        for (String type : new String[]{"b-a", "u-d-f", "b-m-r", "b-m-p-s-m",
+                "b-t-f", "t-x-d-d", "", "a"}) {
             assertFalse(PhoneMarkerRelay.supportedType(type));
         }
         assertFalse(PhoneMarkerRelay.supportedType(null));
+    }
+
+    @Test public void genericAtomsPreserveXmlDedupeExclusionsAndRevisionGatedDeletion() throws Exception {
+        for (String type : new String[]{"a-h-A-C-F", "a-f-A-C-H", "a-u-A-M-F-Q",
+                "a-n-S", "a-h-G-U-C-I-I", "a-f-G"}) {
+            PhoneMarkerRelay relay = new PhoneMarkerRelay();
+            List<String> writes = new ArrayList<>();
+            String xml = XML.replace("a-f-G", type);
+            PhoneMarkerRelay.Snapshot atom = new PhoneMarkerRelay.Snapshot("phone", type,
+                    38, -77, 0, 9999999, 9999999, 1, 1, 2, false, type, xml);
+            assertTrue(relay.forward(atom, 7, 7, 0, (json, session) -> writes.add(json)));
+            assertEquals(xml, new JSONObject(writes.get(0)).getJSONObject("payload").getString("cot"));
+            assertFalse(relay.forward(atom, 7, 7, 1, (json, session) -> writes.add(json)));
+            assertFalse(relay.forward(atom, 7, 8, 1, (json, session) -> writes.add(json)));
+            assertFalse(relay.forward(snapshot("phone", type, 38, -77, 0, 1, 1,
+                    1, 1, 2, true, "excluded"), 7, 7, 1, (json, session) -> writes.add(json)));
+            String token = relay.deletionToken("phone");
+            assertTrue(relay.acceptsDeletion(atom, token, 7));
+            assertFalse(relay.acceptsDeletion(atom, token, 8));
+            assertTrue(relay.forwardDeletion(atom, 7, (json, session) -> writes.add(json)));
+            assertEquals("marker_delete", new JSONObject(writes.get(1)).getString("msg_type"));
+        }
     }
 
     @Test public void identityPointTimestampsAndPliEmergencyExclusionsAreValidated() {

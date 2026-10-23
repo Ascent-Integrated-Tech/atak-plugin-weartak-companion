@@ -17,6 +17,15 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+The phone-to-WearOS point relay forwards all non-user `a-*` atoms (including
+aircraft, surface and detailed ground types) plus SPI `b-m-p-s-p-i`, preserving
+the exported CoT and its affiliation/type. User/contact PLI remains on
+`PhoneUserRelay`; self/watch exclusions, bounds, duplicate suppression,
+stale handling, revision-gated deletion and capacity limits are unchanged.
+Invalid-source-lifetime user warnings are limited to once per UID per minute
+using a bounded 512-entry diagnostic cache. Recovery, removal or relay stop
+clears the corresponding warning state.
+
 ### Phone-owned position actions and Garmin field relay
 
 Garmin alerts and legacy WearOS/Companion PLI and alerts use the phone's newest

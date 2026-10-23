@@ -10,6 +10,21 @@ import java.util.Map;
 /** PLI copies are session-scoped users, never revision-authorized dropped points. */
 final class PhoneUserRelay {
     static final int CAPACITY = 512;
+    static final class LifetimeWarnings {
+        private final Map<String, Long> last = new LinkedHashMap<>();
+
+        boolean shouldReport(String uid, long now) {
+            Long previous = last.get(uid);
+            if (previous != null && now - previous < 60000) return false;
+            last.put(uid, now);
+            while (last.size() > CAPACITY) last.remove(last.keySet().iterator().next());
+            return true;
+        }
+
+        void remove(String uid) { last.remove(uid); }
+        void clear() { last.clear(); }
+    }
+
     interface Writer {
         boolean write(String envelope, long session);
     }
