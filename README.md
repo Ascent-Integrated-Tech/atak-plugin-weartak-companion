@@ -64,12 +64,16 @@ came up, other statuses, Samsung-owned connects and automatic reconnects are not
 retried here. A new GATT connection waits 1 s after a previous GATT close and
 300 ms after an active scan stops.
 
-The BLE picker preserves the advertised watch name verbatim, including hyphens
-and any `WT-` prefix. A different Android bonded alias is shown beneath it as
-"Bonded as ..."; Android's cached device name supplies that context if no alias
-is available. A remote name distinct from the alias can supply a device label when
-no advertisement name is available. Otherwise the Android bonded name, then the
-address is used, not a guessed pre-bond name. A nameless
+WEARTAK-271: Traditional BLE scan/selected rows and Gateway rows share a single-line
+identity: `<watch callsign>, <Android product name> (bonded as <local ATAK callsign>)`.
+The callsign comes from the ready watch session or A11A scan response; the product
+label comes from Android's Bluetooth device name, not its alias. Android cannot
+guarantee this is the factory product name if the device name was changed elsewhere.
+The bond suffix uses this ATAK device's current callsign, never the system watch
+alias, and is omitted without a confirmed bond or available local callsign.
+Missing and duplicate identity parts are omitted without stray punctuation; existing
+device-name/address fallbacks remain available. The address remains separately visible.
+No Bluetooth/device names or system settings are changed. A nameless
 packet retains an earlier advertisement for the same address within that scan.
 Names are display context only; device selection and trust remain address-based.
 WEARTAK-269: A11A service data in the scan response supplies the watch's chosen
@@ -92,9 +96,8 @@ private-address rotation cannot safely prove that two advertisements are one wat
 Scan completion supplies a final fresh snapshot; after scanning stops, that snapshot
 is not a live reachability indicator. Expiry affects scan choices only, not selected/
 connected peers, bonds, reconnect targets or the address-keyed callsign cache.
-After handshake, an observed full callsign is primary, with the available advertised/
-remote device label and distinct bonded alias below it. Duplicate fields are
-omitted. Callsigns are bound to the ready peer address and session generation;
+After handshake, an observed full callsign is primary. Callsigns are bound to
+the ready peer address and session generation;
 they are not persisted for future scans or borrowed from another watch. The
 separate advertised callsign is not persisted across plugin restart. These
 labels cannot recover a historical product name that Android/the watch no longer

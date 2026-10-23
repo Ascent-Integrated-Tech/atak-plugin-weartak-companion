@@ -112,9 +112,9 @@ public class BlePickerIdentityTest {
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
 
         BleDeviceAdapter.bindNames(name, alias, scan(ORIGINAL, ALIAS, ALIAS, true, null));
-        verify(name).setText(ORIGINAL);
-        verify(alias).setText("Bonded as " + ALIAS);
-        verify(alias).setVisibility(View.VISIBLE);
+        verify(name).setText(ALIAS);
+        verify(alias).setText("");
+        verify(alias).setVisibility(View.GONE);
         clearInvocations(name, alias);
 
         BleDeviceAdapter.bindNames(name, alias, scan(null, null, null, true, null));
@@ -152,13 +152,14 @@ public class BlePickerIdentityTest {
         TextView name = mock(TextView.class);
         TextView details = mock(TextView.class);
         Resources resources = mock(Resources.class);
+        when(name.getResources()).thenReturn(resources);
         when(details.getResources()).thenReturn(resources);
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("Galaxy Watch Ultra2 (RK2Z)", ALIAS, ALIAS, true, null)));
-        verify(name).setText("ODIN-WEARTAK");
-        verify(details).setText("Galaxy Watch Ultra2 (RK2Z)\nBonded as " + ALIAS);
-        verify(details).setVisibility(View.VISIBLE);
+        verify(name).setText("ODIN-WEARTAK, " + ALIAS);
+        verify(details).setText("");
+        verify(details).setVisibility(View.GONE);
         clearInvocations(name, details);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
                 scan("ODIN-WEARTAK", "ODIN-WEARTAK", "odin-weartak", true, null)));
@@ -292,15 +293,99 @@ public class BlePickerIdentityTest {
         TextView name = mock(TextView.class);
         TextView details = mock(TextView.class);
         Resources resources = mock(Resources.class);
+        when(name.getResources()).thenReturn(resources);
         when(details.getResources()).thenReturn(resources);
         when(resources.getString(R.string.watch_bonded_as, ALIAS)).thenReturn("Bonded as " + ALIAS);
         BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(device));
-        verify(name).setText("SCAN");
-        verify(details).setText(ORIGINAL + "\nBonded as " + ALIAS);
+        verify(name).setText("SCAN, " + ALIAS);
+        verify(details).setText("");
         receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"FULL-CALLSIGN\"}}", 7);
         assertEquals("FULL-CALLSIGN", client.withSessionIdentity(device).primaryName());
         set(client, "connected", false);
         assertEquals("SCAN", client.withSessionIdentity(device).primaryName());
+    }
+
+    @Test public void singleLineIdentityUsesProductAndLocalAtakCallsignNeverSystemAlias() throws Exception {
+        WearTakBleClient client = readyClient();
+        receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"WEAROS-6558\"}}", 7);
+        String product = "Galaxy Watch Ultra 2 (RK2Z)";
+        Resources resources = mock(Resources.class);
+        when(resources.getString(eq(R.string.watch_identity_bonded), any(), any()))
+                .thenAnswer(i -> i.getArgument(1) + " (bonded as " + i.getArgument(2) + ")");
+        WearTakBleClient.DiscoveredDevice bonded = client.withSessionIdentity(
+                scan(null, product, "SYSTEM-ALIAS", true, null));
+        assertEquals("WEAROS-6558, " + product + " (bonded as ODIN-ATAK-S9FE)",
+                BleDeviceAdapter.watchLabel(resources, bonded, "ODIN-ATAK-S9FE"));
+        assertEquals("WEAROS-6558, " + product,
+                BleDeviceAdapter.watchLabel(resources, bonded, " "));
+        WearTakBleClient.DiscoveredDevice unbonded = client.withSessionIdentity(
+                scan(null, product, "SYSTEM-ALIAS", false, null));
+        assertEquals("WEAROS-6558, " + product,
+                BleDeviceAdapter.watchLabel(resources, unbonded, "ODIN-ATAK-S9FE"));
+        assertEquals("WEAROS-6558 (bonded as ODIN)",
+                BleDeviceAdapter.watchLabel(resources, client.withSessionIdentity(
+                        scan(null, null, null, true, null)), "ODIN"));
+        assertEquals(product + " (bonded as ODIN)",
+                BleDeviceAdapter.watchLabel(resources, scan(null, product, "ALIAS", true, null), "ODIN"));
+        assertEquals(ADDRESS, BleDeviceAdapter.watchLabel(resources,
+                scan(null, null, null, false, null), "ODIN"));
+        assertEquals("PAIRED, " + product + " (bonded as ODIN)",
+                BleDeviceAdapter.watchLabel(resources, bonded, "ODIN", "PAIRED"));
+        assertEquals("WEAROS-6558", BleDeviceAdapter.watchLabel(resources,
+                client.withSessionIdentity(scan(null, "WEAROS-6558", null, false, null)), null));
+        WearTakBleClient.DiscoveredDevice sparse = scan(null, null, null, true,
+                scan(null, product, "ALIAS", true, null));
+        assertEquals(product, sparse.productName);
+        assertTrue(sparse.bonded);
+        assertFalse(scan(null, product, "ALIAS", false, sparse).bonded);
+        assertNull(WearTakBleClient.DiscoveredDevice.fromScan(null, null, null, false,
+                "00:00:00:00:00:02", 0, sparse).productName);
+    }
+
+    @Test public void rowBindingReadsCurrentHostCallsignAndClearsSuffixOnUnbondedReuse() throws Exception {
+        com.atakmap.android.maps.MapView.setTestContext(mock(Context.class));
+        try {
+            com.atakmap.android.maps.MapView.setTestCallsign("ODIN-ATAK-S9FE");
+            TextView name = mock(TextView.class);
+            TextView details = mock(TextView.class);
+            Resources resources = mock(Resources.class);
+            when(name.getResources()).thenReturn(resources);
+            when(resources.getString(eq(R.string.watch_identity_bonded), any(), any()))
+                    .thenAnswer(i -> i.getArgument(1) + " (bonded as " + i.getArgument(2) + ")");
+            WearTakBleClient client = readyClient();
+            receive(client, "{\"msgType\":\"watch_info\",\"payload\":{\"cs\":\"WEAROS-6558\"}}", 7);
+            BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
+                    scan(null, "Galaxy Watch Ultra 2 (RK2Z)", "WRONG-ALIAS", true, null)));
+            verify(name).setText("WEAROS-6558, Galaxy Watch Ultra 2 (RK2Z) (bonded as ODIN-ATAK-S9FE)");
+            com.atakmap.android.maps.MapView.setTestCallsign("NEW-EUD");
+            clearInvocations(name);
+            BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
+                    scan(null, null, null, true, null)));
+            verify(name).setText("WEAROS-6558 (bonded as NEW-EUD)");
+            clearInvocations(name);
+            BleDeviceAdapter.bindNames(name, details, client.withSessionIdentity(
+                    scan(null, null, "WRONG-ALIAS", false, null)));
+            verify(name).setText("WEAROS-6558");
+            verify(details, times(3)).setVisibility(View.GONE);
+        } finally {
+            com.atakmap.android.maps.MapView.setTestContext(null);
+        }
+    }
+
+    @Test public void selectedAndRestoredRowsRefreshProductAndBondWithoutUsingAlias() throws Exception {
+        WearTakBleClient client = scanningClient();
+        BluetoothAdapter adapter = (BluetoothAdapter) get(client, "bluetoothAdapter");
+        BluetoothDevice peer = mock(BluetoothDevice.class);
+        when(adapter.getRemoteDevice(ADDRESS)).thenReturn(peer);
+        when(peer.getName()).thenReturn("Galaxy Watch Ultra 2 (RK2Z)");
+        when(peer.getBondState()).thenReturn(BluetoothDevice.BOND_BONDED);
+        WearTakBleClient.DiscoveredDevice restored = new WearTakBleClient.DiscoveredDevice(
+                "Saved name", ADDRESS, 0);
+        WearTakBleClient.DiscoveredDevice observed = client.withSessionIdentity(restored);
+        assertTrue(observed.bonded);
+        assertEquals("Galaxy Watch Ultra 2 (RK2Z)", observed.productName);
+        when(peer.getBondState()).thenReturn(BluetoothDevice.BOND_NONE);
+        assertFalse(client.withSessionIdentity(observed).bonded);
     }
 
     private static byte[] payload(String callsign) {

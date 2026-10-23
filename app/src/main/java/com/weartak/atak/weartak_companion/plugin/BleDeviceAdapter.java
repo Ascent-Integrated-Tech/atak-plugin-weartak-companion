@@ -5,6 +5,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.TextView;
+import android.content.res.Resources;
+import com.atakmap.android.maps.MapView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -120,17 +122,37 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     static void bindNames(TextView name, TextView bondedName,
                           WearTakBleClient.DiscoveredDevice device) {
-        String primary = device.primaryName();
-        name.setText(primary != null && !primary.isEmpty() ? primary
-                : name.getResources().getString(R.string.watch_name_unavailable));
-        String alias = device.distinctBondedName();
-        String secondary = device.secondaryName();
-        String bondContext = alias == null ? null
-                : bondedName.getResources().getString(R.string.watch_bonded_as, alias);
-        String details = secondary == null ? bondContext
-                : bondContext == null ? secondary : secondary + "\n" + bondContext;
-        bondedName.setText(details == null ? "" : details);
-        bondedName.setVisibility(details == null ? View.GONE : View.VISIBLE);
+        name.setText(watchLabel(name.getResources(), device, localCallsign()));
+        bondedName.setText("");
+        bondedName.setVisibility(View.GONE);
+    }
+
+    static String localCallsign() {
+        MapView map = MapView.getMapView();
+        return map == null ? null : map.getDeviceCallsign();
+    }
+
+    static String watchLabel(Resources resources, WearTakBleClient.DiscoveredDevice device,
+                             String localCallsign) {
+        return watchLabel(resources, device, localCallsign, device.callsign);
+    }
+
+    static String watchLabel(Resources resources, WearTakBleClient.DiscoveredDevice device,
+                             String localCallsign, String pairedCallsign) {
+        String watch = nonBlank(pairedCallsign);
+        if (watch == null) watch = nonBlank(device.advertisedCallsign);
+        String product = nonBlank(device.productName);
+        String label = watch == null ? product : product == null || watch.equalsIgnoreCase(product)
+                ? watch : watch + ", " + product;
+        if (label == null) label = nonBlank(device.primaryName());
+        if (label == null) label = resources.getString(R.string.watch_name_unavailable);
+        String local = nonBlank(localCallsign);
+        return device.bonded && local != null
+                ? resources.getString(R.string.watch_identity_bonded, label, local) : label;
+    }
+
+    private static String nonBlank(String value) {
+        return value == null || value.trim().isEmpty() ? null : value.trim();
     }
 
     static class VH extends RecyclerView.ViewHolder {

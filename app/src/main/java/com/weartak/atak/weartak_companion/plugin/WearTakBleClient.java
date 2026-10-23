@@ -373,6 +373,8 @@ public class WearTakBleClient {
         public final String advertisedCallsign;
         public final String advertisedName;
         public final String bondedName;
+        public final String productName;
+        public final boolean bonded;
         public final String address;
         public final int rssi;
 
@@ -382,16 +384,19 @@ public class WearTakBleClient {
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
                                  String address, int rssi) {
-            this(name, advertisedName, bondedName, address, rssi, null, null);
+            this(name, advertisedName, bondedName, address, rssi, null, null, name, false);
         }
 
         private DiscoveredDevice(String name, String advertisedName, String bondedName,
-                                 String address, int rssi, String callsign, String advertisedCallsign) {
+                                 String address, int rssi, String callsign, String advertisedCallsign,
+                                 String productName, boolean bonded) {
             this.name = name;
             this.callsign = callsign;
             this.advertisedCallsign = advertisedCallsign;
             this.advertisedName = advertisedName;
             this.bondedName = bondedName;
+            this.productName = productName;
+            this.bonded = bonded;
             this.address = address;
             this.rssi = rssi;
         }
@@ -410,7 +415,11 @@ public class WearTakBleClient {
             String remoteName = nonBlank(cachedName);
             if (bonded && (nonBlank(alias) == null || sameName(remoteName, bondedName))) remoteName = null;
             String name = advertised != null ? advertised : remoteName;
-            return new DiscoveredDevice(name, advertised, bondedName, address, rssi);
+            String product = nonBlank(cachedName);
+            if (product == null && previous != null && address != null && address.equals(previous.address))
+                product = previous.productName;
+            return new DiscoveredDevice(name, advertised, bondedName, address, rssi,
+                    null, null, product, bonded);
         }
 
         String distinctBondedName() {
@@ -465,6 +474,21 @@ public class WearTakBleClient {
 
     synchronized DiscoveredDevice withSessionIdentity(DiscoveredDevice device) {
         String callsign = null;
+        boolean bonded = device.bonded;
+        String product = device.productName;
+        if (bluetoothAdapter != null && device.address != null && hasConnectPermission()) {
+            try {
+                BluetoothDevice peer = bluetoothAdapter.getRemoteDevice(device.address);
+                if (peer != null) {
+                    bonded = isBonded(peer);
+                    String currentName = DiscoveredDevice.nonBlank(safeGetDeviceName(peer));
+                    if (currentName != null) product = currentName;
+                }
+            } catch (IllegalArgumentException | SecurityException e) {
+                bonded = false;
+                logW("Unable to check display bond: " + e.getMessage());
+            }
+        }
         if (getReadySession() >= 0 && callsignSession == sessionGeneration
                 && device.address != null
                 && device.address.equals(bluetoothGatt.getDevice().getAddress())) {
@@ -473,7 +497,8 @@ public class WearTakBleClient {
         return new DiscoveredDevice(device.name, device.advertisedName, device.bondedName,
                 device.address, device.rssi, callsign,
                 advertisedCallsigns.containsKey(device.address)
-                        ? advertisedCallsigns.get(device.address) : device.advertisedCallsign);
+                        ? advertisedCallsigns.get(device.address) : device.advertisedCallsign,
+                product, bonded);
     }
 
     public interface ScanListener {
