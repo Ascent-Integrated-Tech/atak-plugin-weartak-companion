@@ -15,11 +15,12 @@ assets. GitHub's automatic source-code archive links remain a repository-level
 GitHub behavior.
 
 The rolling release uses the fixed tag `tak-gov-ci-cd-pipeline`. Each asset is
-named `WearTAK-ATAK-Plugin-civ-release-pipeline-<pipeline-id>.apk`; the release
+named `WearTAK-Companion-<version>-p<project-pipeline-IID>.apk`; the release
 description links to the current asset and includes its source commit, pipeline,
 manifest versionName/versionCode, and SHA-256. The versioned Forge release title
-uses the plugin version and project pipeline IID (global pipeline ID when an IID
-is unavailable). The notes distinguish both pipeline identifiers, link to canonical
+uses the plugin version and project pipeline IID. The IID is required, and the
+distributable version must match the signed manifest versionName's version prefix.
+The notes distinguish both pipeline identifiers, link to canonical
 TAK.gov source, and explain that GitHub Source code archives use a fixed anchor
 tag rather than the authoritative source SHA. Generated notes sit between hidden
 ownership markers; manual content outside that block is preserved, including when
@@ -36,6 +37,11 @@ SHA-256 digest. Legacy `WearTAK Companion managed APK sha256=...` labels are
 also recognized using their embedded hash; a verified same-pipeline legacy asset
 can be relabeled in place without re-uploading its bytes. Unlabeled, mismatched,
 or otherwise unverifiable assets are retained.
+Legacy `WearTAK-ATAK-Plugin-civ-release-pipeline-<pipeline-id>.apk` assets are
+retained so previously shared URLs remain usable. A retry of an already published
+legacy pipeline reuses its original asset/URL; it does not rename or duplicate it.
+Cleanup applies only to the new versioned filename namespace. An existing asset
+with the same version/IID but different bytes is rejected, never replaced.
 Other release assets and every separately tagged release are left untouched. A
 failed upload or verification leaves the existing release description and APK
 usable.
