@@ -5,6 +5,9 @@
     <string name="watch_name_unavailable">Unknown watch</string>
     <string name="watch_bonded_as">Bonded as %1$s</string>
     <string name="watch_identity_bonded">%1$s (bonded as %2$s)</string>
+    <string name="watch_identity_unavailable">Unavailable</string>
+    <string name="watch_identity_dbm">%1$d dBm</string>
+    <string name="watch_identity_lines">ATAK Callsign: %1$s (%2$s)\nBluetooth Address: %3$s\nBluetooth Strength: %4$s\nWearTAK Callsign: %5$s\nWearTAK Product Name: %6$s</string>
     <!-- description -->
     <string name="system_bonded_watch_toggle">Use Samsung Wearable Bond</string>
     <string name="system_bonded_watch_checking">Samsung Wearable use disabled; checking for a compatible already bonded watch…</string>

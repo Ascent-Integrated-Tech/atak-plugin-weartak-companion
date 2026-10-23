@@ -64,12 +64,28 @@ came up, other statuses, Samsung-owned connects and automatic reconnects are not
 retried here. A new GATT connection waits 1 s after a previous GATT close and
 300 ms after an active scan stops.
 
-WEARTAK-271: Traditional BLE scan/selected rows and Gateway rows share a single-line
-identity: `<watch callsign>, <Android product name> (bonded as <local ATAK callsign>)`.
+WEARTAK-271: Bond/Configure Single Watch BLE scan and selected rows show five
+alphabetically ordered labeled lines:
+
+```text
+ATAK Callsign: <local ATAK callsign> (<current panel status chip text>)
+Bluetooth Address: <watch address>
+Bluetooth Strength: <last observed RSSI> dBm
+WearTAK Callsign: <watch callsign>
+WearTAK Product Name: <Android Bluetooth device name>
+```
+
+The first line mirrors the active BLE/Samsung panel status chip verbatim, including
+sync/error/disconnected states, whenever that chip updates. Missing identity,
+address or signal values display `Unavailable` with their labels retained.
+No watch callsign is invented from a Bluetooth product name or alias. The old
+unlabeled MAC, RSSI badge, and secondary bond-name text are hidden in those rows;
+the identity block can expand without truncating the five fields. Gateway retains
+the compact `<watch callsign>, <product name> (bonded as <local ATAK callsign>)` label.
 The callsign comes from the ready watch session or A11A scan response; the product
 label comes from Android's Bluetooth device name, not its alias. Android cannot
 guarantee this is the factory product name if the device name was changed elsewhere.
-The bond suffix uses this ATAK device's current callsign, never the system watch
+The Gateway bond suffix uses this ATAK device's current callsign, never the system watch
 alias, and is omitted without a confirmed bond or available local callsign.
 Missing and duplicate identity parts are omitted without stray punctuation; existing
 device-name/address fallbacks remain available. The address remains separately visible.

@@ -29,6 +29,13 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     private String connectedAddress = null;
     private boolean settingsVisible;
     private boolean disconnectPending;
+    private String panelStatus;
+
+    void setPanelStatus(String status) {
+        if (java.util.Objects.equals(panelStatus, status)) return;
+        panelStatus = status;
+        notifyDataSetChanged();
+    }
 
     public BleDeviceAdapter(Listener listener) {
         this.listener = listener;
@@ -79,9 +86,10 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
     public void onBindViewHolder(@NonNull VH h, int position) {
         WearTakBleClient.DiscoveredDevice d = items.get(position);
 
-        bindNames(h.deviceName, h.bondedName, d);
-        h.deviceMac.setText(d.address);
-        h.rssiBadge.setText(d.rssi + " dBm");
+        bindNames(h.deviceName, h.bondedName, d, panelStatus);
+        h.deviceMac.setVisibility(View.GONE);
+        h.rssiBadge.setVisibility(View.GONE);
+        h.deviceState.setVisibility(View.GONE);
 
         boolean isConnected = d.address != null && d.address.equals(connectedAddress);
         boolean isConnecting = d.address != null && d.address.equals(connectingAddress);
@@ -122,9 +130,31 @@ public class BleDeviceAdapter extends RecyclerView.Adapter<BleDeviceAdapter.VH> 
 
     static void bindNames(TextView name, TextView bondedName,
                           WearTakBleClient.DiscoveredDevice device) {
-        name.setText(watchLabel(name.getResources(), device, localCallsign()));
+        bindNames(name, bondedName, device, null);
+    }
+
+    static void bindNames(TextView name, TextView bondedName,
+                          WearTakBleClient.DiscoveredDevice device, String status) {
+        name.setText(identityLines(name.getResources(), device, localCallsign(), status));
         bondedName.setText("");
         bondedName.setVisibility(View.GONE);
+    }
+
+    static String identityLines(Resources resources, WearTakBleClient.DiscoveredDevice device,
+                                String localCallsign, String status) {
+        String unknown = resources.getString(R.string.watch_identity_unavailable);
+        String watch = nonBlank(device.callsign);
+        if (watch == null) watch = nonBlank(device.advertisedCallsign);
+        return resources.getString(R.string.watch_identity_lines,
+                available(localCallsign, unknown), available(status, unknown),
+                available(device.address, unknown),
+                device.rssi == 0 ? unknown : resources.getString(R.string.watch_identity_dbm, device.rssi),
+                available(watch, unknown), available(device.productName, unknown));
+    }
+
+    private static String available(String value, String unknown) {
+        String text = nonBlank(value);
+        return text == null ? unknown : text;
     }
 
     static String localCallsign() {
