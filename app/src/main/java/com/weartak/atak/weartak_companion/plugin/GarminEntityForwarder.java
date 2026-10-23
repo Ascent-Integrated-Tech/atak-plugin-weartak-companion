@@ -38,11 +38,12 @@ final class GarminEntityForwarder {
     private final Map<Link, Map<String, Map<String, Object>>> published = new HashMap<>();
     private final Map<Link, String> sessions = new HashMap<>();
     private static final class Pending {
-        final boolean alert;
+        final boolean retainOnRemoval;
         Map<String, Object> entity;
         Pending(Map<String, Object> value) {
             entity = value;
-            alert = Boolean.TRUE.equals(value.get("isAlert"));
+            retainOnRemoval = Boolean.TRUE.equals(value.get("isAlert"))
+                    || Boolean.TRUE.equals(value.get("isDelete"));
         }
     }
     private final Map<String, Set<Pending>> pending = new HashMap<>();
@@ -177,7 +178,7 @@ final class GarminEntityForwarder {
         if (!active()) return;
         Set<Pending> queued = pending.get(uid);
         if (queued != null) {
-            queued.removeIf(revision -> !revision.alert);
+            queued.removeIf(revision -> !revision.retainOnRemoval);
             if (queued.isEmpty()) pending.remove(uid);
         }
         for (Map.Entry<Link, Map<String, Map<String, Object>>> entry : published.entrySet()) {
@@ -190,6 +191,13 @@ final class GarminEntityForwarder {
                 payload.put("scope", "phone-relay-users");
                 if (previous.get("time") instanceof String) payload.put("time", previous.get("time"));
                 if (!link.sendForSession("entity_remove", payload, sessions.get(link))) continue;
+            } else if (previous != null && !Boolean.TRUE.equals(previous.get("isAlert")) && link.isCurrent()) {
+                Map<String, Object> deletion = new HashMap<>();
+                deletion.put("uid", uid);
+                deletion.put("type", "t-x-d-d");
+                deletion.put("isDelete", true);
+                deletion.put("time", java.time.Instant.now().toString());
+                if (!link.sendForSession("entity", deletion, sessions.get(link))) continue;
             }
             entry.getValue().remove(uid);
         }
@@ -236,6 +244,9 @@ final class GarminEntityForwarder {
     }
 
     private boolean eligible(Link link, Map<String, Object> entity) {
+        if (!Boolean.TRUE.equals(entity.get("isAlert"))
+                && (link.watchUid().equals(entity.get("uid"))
+                || source.excludedUids().contains(entity.get("uid")))) return false;
         if (!isUser(entity)) return true;
         Object uid = entity.get("uid");
         if (link.entitySyncVersion() >= 2 && (link.watchUid().isEmpty()

@@ -135,6 +135,18 @@ public class GarminEntityForwarderTest {
         assertEquals("CANCEL", first.payloads.get(2).get("state"));
     }
 
+    @Test public void coordinateFreeDeleteSurvivesFollowingMapRemoval() {
+        start();
+        Map<String, Object> deletion = GarminEntityAdapter.normalize("deleted",
+                Double.NaN, Double.NaN, "t-x-d-d", Collections.emptyMap(), false, false);
+        source.emit(deletion);
+        source.removed.accept("deleted");
+        drain();
+        assertEquals(2, first.types.size());
+        assertEquals("t-x-d-d", first.payloads.get(1).get("type"));
+        assertFalse(first.payloads.get(1).containsKey("lat"));
+    }
+
     @Test public void restartedOwnerGetsFreshSubscriptionAndDedupeState() {
         start();
         forwarder.close();

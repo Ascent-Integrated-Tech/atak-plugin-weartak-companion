@@ -3,6 +3,43 @@ include:
     ref: master
     file: '/template/build_and_sign.yml'
 
+field_report_regressions:
+  stage: test
+  image:
+    name: ${TAK_REGISTRY_HOST}/devsecops/gradle-build-launcher:17-${GRADLE_BUILD_LAUNCHER_TAG}
+    entrypoint: [""]
+  script:
+    - |
+      set -euo pipefail
+      mkdir -p .regression-libs .regression-classes
+      base=https://repo.maven.apache.org/maven2
+      curl --fail --silent --show-error --retry 3 "$base/junit/junit/4.13.2/junit-4.13.2.jar" -o .regression-libs/junit.jar
+      curl --fail --silent --show-error --retry 3 "$base/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar" -o .regression-libs/hamcrest.jar
+      curl --fail --silent --show-error --retry 3 "$base/org/json/json/20231013/json-20231013.jar" -o .regression-libs/json.jar
+      main=app/src/main/java/com/weartak/atak/weartak_companion/plugin
+      tests=app/src/test/java/com/weartak/atak/weartak_companion/plugin
+      javac -cp '.regression-libs/*' -d .regression-classes \
+        "$main/PhoneFixValidator.java" "$main/PhonePosition.java" \
+        "$main/PhonePositionActions.java" "$main/WatchMessageIds.java" \
+        "$main/LegacyPliCot.java" \
+        "$main/GarminEntityAdapter.java" "$main/GarminEntityForwarder.java" \
+        "$main/ConnectionModeController.java" \
+        "$tests/PhonePositionActionsTest.java" "$tests/WatchMessageIdsTest.java" \
+        "$tests/LegacyPliCotTest.java" \
+        "$tests/GarminEntityAdapterTest.java" "$tests/GarminEntityForwarderTest.java"
+      java -cp '.regression-classes:.regression-libs/*' org.junit.runner.JUnitCore \
+        com.weartak.atak.weartak_companion.plugin.PhonePositionActionsTest \
+        com.weartak.atak.weartak_companion.plugin.WatchMessageIdsTest \
+        com.weartak.atak.weartak_companion.plugin.LegacyPliCotTest \
+        com.weartak.atak.weartak_companion.plugin.GarminEntityAdapterTest \
+        com.weartak.atak.weartak_companion.plugin.GarminEntityForwarderTest | tee field-report-regressions.log
+  artifacts:
+    when: always
+    paths:
+      - field-report-regressions.log
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
 release_build_and_sign:
   stage: build
   extends: .build_and_sign_jdk17

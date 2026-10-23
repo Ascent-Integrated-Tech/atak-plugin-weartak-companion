@@ -120,6 +120,18 @@ public class LegacyPliCotTest {
                 38.123456, -77.123456, 123.4, 10, 20, metadata, NOW);
     }
 
+    @Test public void validNearOriginFixIsNotRoundedIntoZeroZero() throws Exception {
+        Document event = parse(LegacyPliCot.build(new JSONObject(), "phone", "PHONE",
+                0.00000001, 0, 0, 42, 9999999, phone, NOW));
+        assertEquals(0.00000001, Double.parseDouble(first(event, "point").getAttribute("lat")), 0);
+        assertEquals(42, Double.parseDouble(first(event, "point").getAttribute("ce")), 0);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void noFixPlaceholderCanNeverBePublishedAsPli() {
+        LegacyPliCot.build(new JSONObject(), "phone", "PHONE", 0, 0, 0, 10, 10, phone, NOW);
+    }
+
     private static Document parse(String xml) throws Exception {
         return DocumentBuilderFactory.newInstance().newDocumentBuilder()
                 .parse(new InputSource(new StringReader(xml)));

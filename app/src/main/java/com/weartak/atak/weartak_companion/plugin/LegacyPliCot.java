@@ -25,6 +25,9 @@ final class LegacyPliCot {
     static String build(JSONObject payload, String phoneUid, String phoneCallsign,
                         double lat, double lon, double hae, double ce, double le,
                         Metadata phone, long now) {
+        if (!PhoneFixValidator.isUsable(lat, lon)) {
+            throw new IllegalArgumentException("PLI requires a real phone position");
+        }
         String time = string(payload, "tStart", Instant.ofEpochMilli(now).toString());
         String stale = string(payload, "tStale", Instant.ofEpochMilli(now + 120000).toString());
         StringBuilder detail = new StringBuilder("<remarks>")
@@ -54,8 +57,8 @@ final class LegacyPliCot {
         return "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
                 + "<event version='2.0' uid='" + xml(phoneUid) + "' type='a-f-G-U-C' "
                 + "time='" + xml(time) + "' start='" + xml(time) + "' stale='" + xml(stale)
-                + "' how='h-g-i-g-o'><point lat='" + String.format(Locale.US, "%.6f", lat)
-                + "' lon='" + String.format(Locale.US, "%.6f", lon)
+                + "' how='h-g-i-g-o'><point lat='" + Double.toString(lat)
+                + "' lon='" + Double.toString(lon)
                 + "' hae='" + String.format(Locale.US, "%.1f", hae)
                 + "' ce='" + number(ce) + "' le='" + number(le) + "'/><detail>"
                 + detail + "</detail></event>";

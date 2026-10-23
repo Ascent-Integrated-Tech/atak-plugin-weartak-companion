@@ -10,6 +10,7 @@ import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.Marker;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.PointMapItem;
+import com.atakmap.android.maps.Shape;
 import com.atakmap.android.importexport.CotEventFactory;
 import com.atakmap.coremap.cot.event.CotDetail;
 import com.atakmap.coremap.cot.event.CotEvent;
@@ -30,13 +31,14 @@ import java.util.function.Consumer;
 final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     private final MapView map;
     private final BleCotBridge origin;
-    private final Set<PointMapItem> observed = new HashSet<>();
+    private final Set<MapItem> observed = new HashSet<>();
     private Consumer<Map<String, Object>> listener;
     private Consumer<String> removed;
     private final MapEventDispatcher.MapEventDispatchListener events = this::onEvent;
     private final MapItem.OnMetadataChangedListener metadata = (item, key) -> changed(item);
     private final MapItem.OnTypeChangedListener type = this::changed;
     private final PointMapItem.OnPointChangedListener point = this::changed;
+    private final Shape.OnPointsChangedListener shape = this::changed;
 
     GarminMapEntitySource(MapView map, BleCotBridge origin) {
         this.map = map;
@@ -58,21 +60,23 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         removed = null;
         for (String event : new String[]{MapEvent.ITEM_ADDED, MapEvent.ITEM_IMPORTED,
                 MapEvent.ITEM_REMOVED}) map.getMapEventDispatcher().removeMapEventListenerFromBase(event, events);
-        for (PointMapItem item : new ArrayList<>(observed)) unobserve(item);
+        for (MapItem item : new ArrayList<>(observed)) unobserve(item);
     }
 
     private synchronized void observe(MapItem item) {
-        if (listener == null || !(item instanceof PointMapItem) || !observed.add((PointMapItem) item)) return;
+        if (listener == null || item == null || !observed.add(item)) return;
         MetadataObservers.add(item, metadata);
         item.addOnTypeChangedListener(type);
-        ((PointMapItem) item).addOnPointChangedListener(point);
+        if (item instanceof PointMapItem) ((PointMapItem) item).addOnPointChangedListener(point);
+        if (item instanceof Shape) ((Shape) item).addOnPointsChangedListener(shape);
     }
 
-    private void unobserve(PointMapItem item) {
+    private void unobserve(MapItem item) {
         observed.remove(item);
         MetadataObservers.remove(item, metadata);
         item.removeOnTypeChangedListener(type);
-        item.removeOnPointChangedListener(point);
+        if (item instanceof PointMapItem) ((PointMapItem) item).removeOnPointChangedListener(point);
+        if (item instanceof Shape) ((Shape) item).removeOnPointsChangedListener(shape);
     }
 
     private void onEvent(MapEvent event) {
@@ -83,7 +87,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         if (MapEvent.ITEM_REMOVED.equals(event.getType())) {
             Consumer<String> removal;
             synchronized (this) {
-                if (item instanceof PointMapItem) unobserve((PointMapItem) item);
+                unobserve(item);
                 removal = removed;
             }
             if (removal != null) removal.accept(item.getUID());
@@ -97,7 +101,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     private void changed(MapItem item) {
         Consumer<Map<String, Object>> target;
         synchronized (this) {
-            if (listener == null || !(item instanceof PointMapItem) || !observed.contains(item)
+            if (listener == null || !observed.contains(item)
                     || item.getGroup() == null) return;
             target = listener;
         }
@@ -111,7 +115,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     }
 
     private Map<String, Object> normalize(MapItem item) {
-        if (!(item instanceof PointMapItem) || item.getUID() == null || item == map.getSelfMarker()
+        if (item.getUID() == null || item == map.getSelfMarker()
                 || item.hasMetaValue("nevercot")) return null;
         try {
             CotEvent event = item instanceof Marker ? PhoneUserCot.export((Marker) item)
@@ -119,7 +123,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
             if (event == null || !item.getUID().equals(event.getUID())) return null;
             long updated = item.getMetaLong("lastUpdateTime", 0);
             long duration = item.getMetaLong("autoStaleDuration", 0);
-            boolean user = event.getType() != null && event.getType().startsWith("a-")
+            boolean user = GarminEntityAdapter.groundUserType(event.getType())
                     && item instanceof Marker && PhoneUserCot.isUser(item, event)
                     && event.findDetail("emergency") == null;
             if (user && !GarminEntityAdapter.validUserLifetime(updated, duration)) {
@@ -138,15 +142,15 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         }
     }
 
-    void emergency(CotEvent event) {
+    void cot(CotEvent event) {
         Consumer<Map<String, Object>> target;
         synchronized (this) { target = listener; }
-        if (target == null || event == null || !PhoneEmergencyRelay.isEmergencyType(event.getType())) return;
+        if (target == null || event == null || !GarminEntityAdapter.supportedType(event.getType())) return;
         try {
             Map<String, Object> entity = normalize(event, null);
             if (entity != null) target.accept(entity);
         } catch (RuntimeException e) {
-            LogX.w("WTK/GarminEntity", "Unable to normalize emergency", e);
+            LogX.w("WTK/GarminEntity", "Unable to normalize CoT event", e);
         }
     }
 
@@ -159,7 +163,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         Map<String, Object> meta = new HashMap<>();
         CotDetail contact = event.findDetail("contact"), group = event.findDetail("__group");
         CotDetail emergency = event.findDetail("emergency"), link = event.findDetail("link");
-        boolean user = event.getType() != null && event.getType().startsWith("a-")
+        boolean user = GarminEntityAdapter.groundUserType(event.getType())
                 && item instanceof Marker && PhoneUserCot.isUser(item, event)
                 && !PhoneEmergencyRelay.isEmergencyType(event.getType()) && emergency == null;
         meta.put("isUser", user);
@@ -180,6 +184,21 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         put(meta, "team", attribute(group, "name"));
         put(meta, "role", attribute(group, "role"));
         put(meta, "senderUID", attribute(link, "uid"));
+        meta.put("link", detail(link, "uid", "relation", "type"));
+        CotDetail ellipse = event.findDetail("ellipse");
+        if (ellipse == null) {
+            CotDetail geometry = event.findDetail("shape");
+            if (geometry != null) ellipse = geometry.getFirstChildByName(0, "ellipse");
+        }
+        if (ellipse != null) {
+            Map<String, Object> axes = new HashMap<>();
+            number(axes, "major", attribute(ellipse, "major"));
+            number(axes, "minor", attribute(ellipse, "minor"));
+            number(axes, "angle", attribute(ellipse, "angle"));
+            meta.put("shape", Collections.singletonMap("ellipse", axes));
+        }
+        CotDetail radius = event.findDetail("radius");
+        number(meta, "radius", attribute(radius, "value"));
         put(meta, "category", attribute(emergency, "type"));
         put(meta, "how", event.getHow());
         if (event.getTime() != null) meta.put("time", event.getTime().toString());
@@ -211,7 +230,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     }
 
     @Override public synchronized List<Map<String, Object>> snapshot(int limit) {
-        if (listener == null || map.getSelfMarker() == null) return Collections.emptyList();
+        if (map.getSelfMarker() == null) return Collections.emptyList();
         GeoPoint self = map.getSelfMarker().getPoint();
         if (self == null || !self.isValid()
                 || GarminEntityAdapter.expired(map.getSelfMarker().getMetaString("stale", "")))
@@ -244,5 +263,15 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
     }
     private static void put(Map<String, Object> meta, String key, String value) {
         if (value != null && !value.trim().isEmpty()) meta.put(key, value);
+    }
+    private static void number(Map<String, Object> meta, String key, String value) {
+        if (value == null || value.isEmpty()) return;
+        try {
+            double number = Double.parseDouble(value);
+            if (Double.isFinite(number) && number >= 0) meta.put(key, number);
+            else LogX.w("WTK/GarminEntity", "Invalid geometry " + key);
+        } catch (NumberFormatException error) {
+            LogX.w("WTK/GarminEntity", "Invalid geometry " + key, error);
+        }
     }
 }
