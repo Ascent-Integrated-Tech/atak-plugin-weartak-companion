@@ -2039,7 +2039,20 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
         }
         if (bleCotBridge != null) {
-            bleCotBridge.handleGarminMessage(envelope);
+            String relaySession = link == null ? "" : link.relaySession();
+            boolean accepted = bleCotBridge.handleGarminMessage(envelope, entity -> {
+                if (link != null && link.isCurrent()
+                        && !link.sendForSession("entity", entity, relaySession)) {
+                    LogX.w(TAG, "Unable to return phone-resolved Garmin marker");
+                }
+            });
+            JSONObject payload = envelope.optJSONObject("payload");
+            String messageId = WatchMessageIds.id(envelope);
+            if (payload != null && !messageId.isEmpty() && link != null && link.isCurrent()) {
+                if (!link.send("relay_result", WatchMessageIds.result(envelope, accepted))) {
+                    LogX.w(TAG, "Unable to acknowledge Garmin message; a retry will be deduplicated");
+                }
+            }
         }
     }
 
@@ -2095,7 +2108,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             return;
         }
         if (garminEnabled && garminEntitySource != null) {
-            garminEntitySource.emergency(event);
+            garminEntitySource.cot(event);
             return;
         }
         WearTakBleClient client = bleClient;
@@ -2732,6 +2745,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 for (int i = 0; i < keys.length; i++) {
                     if (payload.has(keys[i])) lastSentPhoneIdentity.set(i, identity.get(i));
                 }
+            }
+            if (!commands.isEmpty() && bleCotBridge != null) {
+                bleCotBridge.sendStandardPli(new JSONObject().put("payload", new JSONObject()).toString());
             }
             desiredWatchCallsign = identity.get(0);
             lastSettingsApplyResult = null;

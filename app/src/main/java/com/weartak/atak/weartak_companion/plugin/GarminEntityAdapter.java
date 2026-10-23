@@ -19,6 +19,7 @@ final class GarminEntityAdapter {
         if (self || watchOrigin || uid == null || uid.trim().isEmpty()
                 || !supportedType(type)) return null;
         if (metadata == null) metadata = Collections.emptyMap();
+        boolean deletion = "t-x-d-d".equals(type);
         boolean alert = isAlert(type, metadata);
         boolean cancelled = type.endsWith("-can")
                 || "CANCEL".equalsIgnoreCase(text(metadata, "state"))
@@ -26,12 +27,13 @@ final class GarminEntityAdapter {
                 || Boolean.FALSE.equals(metadata.get("active"))
                 || Boolean.TRUE.equals(metadata.get("cancel"));
         boolean location = PhoneFixValidator.isUsable(lat, lon);
-        if (!alert && (!location || expired(text(metadata, "stale")))) return null;
+        if (!alert && !deletion && (!location || expired(text(metadata, "stale")))) return null;
         Map<String, Object> entity = new HashMap<>();
         entity.put("uid", uid);
         entity.put("type", type);
-        if ("b-m-p-s-p-i".equals(type)) entity.put("isPoint", true);
-        if (!alert && type.startsWith("a-") && Boolean.TRUE.equals(metadata.get("isUser"))) {
+        if (type.startsWith("b-m-p")) entity.put("isPoint", true);
+        if (deletion) entity.put("isDelete", true);
+        if (!alert && groundUserType(type) && Boolean.TRUE.equals(metadata.get("isUser"))) {
             entity.put("isUser", true);
             entity.put("isPoint", false);
         }
@@ -44,9 +46,10 @@ final class GarminEntityAdapter {
             String value = text(metadata, key);
             if (!value.isEmpty()) entity.put(key, value);
         }
-        for (String key : new String[]{"contact", "__group", "track"}) {
+        for (String key : new String[]{"contact", "__group", "track", "link", "shape"}) {
             if (metadata.get(key) instanceof Map) entity.put(key, metadata.get(key));
         }
+        if (metadata.get("radius") instanceof Number) entity.put("radius", metadata.get("radius"));
         if (alert) {
             entity.put("isAlert", true);
             entity.put("active", !cancelled);
@@ -69,7 +72,12 @@ final class GarminEntityAdapter {
 
     static boolean supportedType(String type) {
         return type != null && (type.startsWith("a-") || type.startsWith("b-a-o")
-                || "b-a-g".equals(type) || "b-m-p-s-p-i".equals(type));
+                || "b-a-g".equals(type) || type.startsWith("b-m-p")
+                || type.startsWith("u-d") || "t-x-d-d".equals(type));
+    }
+
+    static boolean groundUserType(String type) {
+        return type != null && type.matches("a-[^-]+-G(?:-.*)?");
     }
 
     static boolean expired(String stale) {

@@ -27,7 +27,8 @@ final class GarminChatPolicy {
         }
         Map<String, Object> status = new HashMap<>();
         status.put("relaySession", session);
-        status.put("reliableDelivery", false);
+        status.put("reliableDelivery", true);
+        status.put("phoneLocation", true);
         status.put("chatGroups", false);
         Object version = hello.opt("bloodhoundVersion");
         if (bloodhoundSupported && version instanceof Number

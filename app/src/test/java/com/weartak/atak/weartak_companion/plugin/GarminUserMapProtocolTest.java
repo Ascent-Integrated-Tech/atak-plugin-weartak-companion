@@ -42,7 +42,7 @@ public class GarminUserMapProtocolTest {
         assertEquals(51, source.limit);
     }
 
-    @Test public void publishedUserRemovalIsScopedButPointRemovalNeverDeletesWatchPoints() {
+    @Test public void publishedUserRemovalIsScopedAndOnlyPublishedPhonePointsAreDeleted() {
         source.items.add(user("remote"));
         start();
         source.removed.accept("remote");
@@ -55,8 +55,11 @@ public class GarminUserMapProtocolTest {
         source.listener.accept(point);
         drain();
         source.removed.accept("point");
-        assertEquals(3, link.types.size());
+        assertEquals(4, link.types.size());
         assertEquals("entity", link.types.get(2));
+        assertEquals("t-x-d-d", link.payloads.get(3).get("type"));
+        source.removed.accept("watch-only-point");
+        assertEquals(4, link.types.size());
     }
 
     @Test public void queuedUserUpdateCannotCrossHelloSessionChange() {

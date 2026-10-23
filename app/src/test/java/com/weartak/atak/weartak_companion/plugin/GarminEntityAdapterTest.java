@@ -74,4 +74,44 @@ public class GarminEntityAdapterTest {
         assertEquals(1, GarminEntityAdapter.nearest(candidates, 38, -77, 0).size());
         assertTrue(GarminEntityAdapter.nearest(candidates, 0, 0, 50).isEmpty());
     }
+
+    @Test public void genericAffiliationsSpotsAndShapeGeometryPreserveWireFields() {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("stale", "2099-01-01T00:00:00Z");
+        Map<String, Object> link = new HashMap<>();
+        link.put("uid", "linked-target");
+        link.put("relation", "p-p");
+        metadata.put("link", link);
+        Map<String, Object> ellipse = new HashMap<>();
+        ellipse.put("major", 250.0);
+        ellipse.put("minor", 250.0);
+        metadata.put("shape", Collections.singletonMap("ellipse", ellipse));
+        metadata.put("radius", 250.0);
+        for (String type : new String[]{"a-h-A-M-F", "a-n-G", "a-u-G", "a-s-G",
+                "b-m-p-s-m", "u-d-c-c", "u-d-f"}) {
+            Map<String, Object> entity = GarminEntityAdapter.normalize("generic", 38, -77,
+                    type, metadata, false, false);
+            assertNotNull(entity);
+            assertEquals(link, entity.get("link"));
+            assertEquals(metadata.get("stale"), entity.get("stale"));
+            assertEquals(metadata.get("shape"), entity.get("shape"));
+            assertEquals(250.0, entity.get("radius"));
+            assertFalse(entity.containsKey("isUser"));
+        }
+    }
+
+    @Test public void coordinateFreeDeleteKeepsLinkedTargetAndIsNotFilteredAsStale() {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("stale", "2000-01-01T00:00:00Z");
+        Map<String, Object> link = new HashMap<>();
+        link.put("uid", "target");
+        link.put("relation", "p-p");
+        meta.put("link", link);
+        Map<String, Object> deletion = GarminEntityAdapter.normalize("delete-event",
+                Double.NaN, Double.NaN, "t-x-d-d", meta, false, false);
+        assertEquals(true, deletion.get("isDelete"));
+        assertFalse(deletion.containsKey("lat"));
+        assertFalse(deletion.containsKey("lon"));
+        assertEquals(link, deletion.get("link"));
+    }
 }

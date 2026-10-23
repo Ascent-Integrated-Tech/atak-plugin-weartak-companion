@@ -17,6 +17,51 @@ The optional Garmin Connect IQ
 transport uses Garmin Connect Mobile on the phone rather than the
 Samsung/Wear OS BLE connection.
 
+### Phone-owned position actions and Garmin field relay
+
+Garmin alerts and legacy WearOS/Companion PLI and alerts use the phone's newest
+available position, never a fabricated 0,0 point or fixed 10 m accuracy.
+Every self-position action starts an active GPS/network location request without
+blocking the action: the newest last-known fix is published immediately, then the
+same entity UID is updated when a new fix arrives. Active emergencies continue
+receiving location updates until cancellation or transport-mode teardown. Other
+actions acquire for at most 30 seconds. Permission/provider failures are logged;
+the plugin does not change permissions or ATAK's location-source selection.
+CoT `ce`/`le` retain source uncertainty (9999999 when unknown), and
+`detail/phone_location` records the original fix UTC time, age and stale flag.
+Unknown fix time is empty with age -1; stale positions are not discarded.
+
+If no real fix has ever been available, positional writes wait for a real fix.
+An emergency immediately sends an All Chat Rooms text alert:
+`EMERGENCY from <callsign>: location unavailable, acquiring GPS`.
+A local notification explicitly reports a text-send failure. The pending
+emergency publishes its position as soon as the first usable fix arrives.
+
+Watch actions can request the same nonblocking refresh using
+`msgType: location_request`, with `payload.action` (`map`, `navigation`, `identity`,
+`self_marker` or `pli`) and `payload.requestId`. The hint refreshes phone PLI, not
+a second marker. A self-position marker carries `payload.locationSource: phone`;
+its UID is retained on the fresh-fix update. Unflagged explicit watch/map-tap
+coordinates remain intentional. Garmin receives a normal `entity` response for
+a phone-resolved self marker using the original marker UID. Phone/self contacts
+remain excluded from Garmin entity snapshots; Garmin owns its local navigation GPS.
+
+Garmin negotiates `relay_status.payload.reliableDelivery: true` and
+`phoneLocation: true` (the capability gate for coordinate-free phone-owned markers). Operational
+messages carry a stable `payload.messageId`; retries receive
+`relay_result.payload: {messageId, relaySession, ok}` using the incoming retry's
+session. One shared, bounded 4096-ID cache suppresses repeated TAK writes across
+Connect IQ/BLE routes and reconnects for this plugin run. ACK means Companion
+accepted the action, not remote teammate delivery; the cache is not a persistent
+exactly-once guarantee across process death. Legacy WearOS envelopes without IDs
+remain supported. Generic Garmin entities include all `a-*` affiliations,
+`b-m-p*` spots and `u-d*` shapes, source stale time, nested `link.uid/relation`,
+radius and `shape.ellipse.major/minor`. Coordinate-free `t-x-d-d` deletion events
+are relayed; map removals delete only entities previously published by the phone.
+The MR-only `field_report_regressions` job runs these transport-independent JUnit
+regressions without signing an APK. The existing protected-`develop` signed
+release pipeline remains unchanged.
+
 ### Companion diagnostic logging (WEARTAK-274)
 
 Use **Log** in the Companion header before reproducing a problem, then **Send**

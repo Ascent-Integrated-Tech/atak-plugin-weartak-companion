@@ -17,13 +17,8 @@ import com.atakmap.android.contact.GroupContact;
 import com.atakmap.android.contact.IndividualContact;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.maps.MapView;
-import com.atakmap.android.maps.MapItem;
-import com.atakmap.android.maps.Marker;
-import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.comms.CotDispatcher;
 import com.atakmap.coremap.cot.event.CotEvent;
-import com.atakmap.coremap.cot.event.CotPoint;
-import com.atakmap.coremap.maps.coords.GeoPoint;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -32,8 +27,6 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
 import java.util.Locale;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,10 +41,14 @@ public class BleCotBridge {
     private final CotDispatcher externalCotDispatcher;
     private final CotDispatcher internalCotDispatcher;
     private final SessionTaskQueue cotQueue = new SessionTaskQueue();
+    private final WatchMessageIds watchMessageIds = new WatchMessageIds();
+    private final PhonePositionActions positions = new PhonePositionActions();
+    private final PhonePositionSource positionSource;
 
     private MapView mapView;
     private String myUid;
     private final java.util.Set<String> garminOriginMarkers = new java.util.LinkedHashSet<>();
+    private final Map<String, Map<String, Object>> resolvedGarminMarkers = new java.util.LinkedHashMap<>();
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
     private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
@@ -67,6 +64,7 @@ public class BleCotBridge {
         externalCotDispatcher = CotMapComponent.getExternalDispatcher();
         internalCotDispatcher = CotMapComponent.getParallelInternalDispatcher();
         mapView = getMapView();
+        positionSource = new PhonePositionSource(mapView, positions);
         myUid = mapView.getSelfMarker().getUID();  // The uid of companion device, so all data looks like it comes from the companion plugin!
         LogX.d(TAG, "BleCotBridge initialized externalDispatcher=" + (externalCotDispatcher != null));
     }
@@ -77,6 +75,7 @@ public class BleCotBridge {
 
     public synchronized void startChatForwarding(WearTakBleClient client) {
         cotQueue.start();
+        positionSource.start();
         bleClient = client;
         garminClient = null;
         registerChatListener();
@@ -84,6 +83,7 @@ public class BleCotBridge {
 
     public synchronized void startChatForwarding(GarminConnectIqClient client) {
         cotQueue.start();
+        positionSource.start();
         garminClient = client;
         bleClient = null;
         registerChatListener();
@@ -102,6 +102,7 @@ public class BleCotBridge {
     }
 
     public synchronized void stopChatForwarding() {
+        positionSource.stop();
         cotQueue.stop();
         gatewayChatForwarder = null;
         if (chatManager != null) {
@@ -190,6 +191,11 @@ public class BleCotBridge {
     // 1) STANDARD PLI (JSON envelope input)
     // =========================================================================================
     public void sendStandardPli(String envelopeJson) {
+        requestPosition("pli", false, fix -> sendStandardPli(envelopeJson, fix),
+                () -> LogX.w(TAG, "PLI deferred: no phone fix has ever been observed"));
+    }
+
+    private void sendStandardPli(String envelopeJson, PhonePosition fix) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -197,11 +203,13 @@ public class BleCotBridge {
                 LogX.w(TAG, "sendStandardPli: missing payload");
                 return;
             }
+            p.put("tStart", iso8601(System.currentTimeMillis()));
+            p.put("tStale", iso8601(System.currentTimeMillis() + 120000));
 
-            EudFix fix = getEudFix();
             String xml = LegacyPliCot.build(p, myUid, pluginCallsign(),
                     fix.lat, fix.lon, fix.hae, fix.ce, fix.le,
-                    PhoneIdentity.metadata(mapView), System.currentTimeMillis());
+                    PhoneIdentity.metadata(mapView), System.currentTimeMillis())
+                    .replace("</detail>", fix.detailXml(System.currentTimeMillis()) + "</detail>");
 
             LogX.d(TAG, "Standard PLI XML:\n" + xml);
 
@@ -274,6 +282,32 @@ public class BleCotBridge {
     }
 
     private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation) {
+        sendMarkerCot(envelopeJson, usePayloadLocation, null);
+    }
+
+    private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation,
+            Consumer<Map<String, Object>> resolved) {
+        try {
+            JSONObject env = new JSONObject(envelopeJson);
+            JSONObject payload = env.getJSONObject("payload");
+            if ("phone".equals(payload.optString("locationSource"))
+                    || !payload.has("lat") && !payload.has("lon")) {
+                if (payload.optString("uid").isEmpty()) payload.put("uid", UUID.randomUUID().toString());
+                if (payload.optString("tStart").isEmpty()) payload.put("tStart", iso8601(System.currentTimeMillis()));
+                String stable = env.toString();
+                requestPosition("marker:" + payload.getString("uid"), false,
+                        fix -> sendMarkerCot(stable, usePayloadLocation, fix, resolved),
+                        () -> LogX.w(TAG, "Self marker deferred: no phone fix has ever been observed"));
+            } else {
+                sendMarkerCot(envelopeJson, usePayloadLocation, null, resolved);
+            }
+        } catch (JSONException error) {
+            LogX.e(TAG, "Invalid watch marker", error);
+        }
+    }
+
+    private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation, PhonePosition fix,
+            Consumer<Map<String, Object>> resolved) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -288,7 +322,8 @@ public class BleCotBridge {
             String type = optString(p, "type", "a-f-G");
 
             // Times: prefer payload.tStart/tStale (your marker payload uses these)
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
+            String time = fix == null ? optString(p, "tStart", iso8601(System.currentTimeMillis()))
+                    : iso8601(System.currentTimeMillis());
             String start = time;
             String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 120_000));
             if (Instant.parse(stale).toEpochMilli() <= System.currentTimeMillis()) {
@@ -298,15 +333,17 @@ public class BleCotBridge {
             String title = optString(p, "title", "");
 
             // Point fields (marker payload has these)
-            EudFix eudFix = getEudFix();
-
-            WatchPointLocation location = new WatchPointLocation(p, eudFix.lat, eudFix.lon,
-                    eudFix.hae, eudFix.ce, eudFix.le);
-            double lat = location.lat;
-            double lon = location.lon;
-            double hae = location.hae;
-            double ce = location.ce;
-            double le = location.le;
+            WatchPointLocation location = fix == null
+                    ? new WatchPointLocation(p, Double.NaN, Double.NaN, PhonePosition.UNKNOWN,
+                            PhonePosition.UNKNOWN, PhonePosition.UNKNOWN) : null;
+            double lat = fix != null ? fix.lat : location.lat;
+            double lon = fix != null ? fix.lon : location.lon;
+            double hae = fix != null ? fix.hae : location.hae;
+            double ce = fix != null ? fix.ce : location.ce;
+            double le = fix != null ? fix.le : location.le;
+            if (!PhoneFixValidator.isUsable(lat, lon)) {
+                throw new IllegalArgumentException("Watch marker has no usable position");
+            }
 
             String callsign = pluginCallsign();
             if (watchAsSource || usePayloadLocation) {
@@ -372,8 +409,9 @@ public class BleCotBridge {
             String batText = (batteryPct == null ? "null" : String.valueOf(batteryPct));
             String remarks = "HeartRate: " + hrText + " bpm; Battery Level: " + batText + "%";
             detail.append("<remarks>").append(escapeXml(remarks)).append("</remarks>");
+            if (fix != null) detail.append(fix.detailXml(System.currentTimeMillis()));
             if (null == title || title.isEmpty()) {
-                title = buildMarkerCallsign(callsign, time);
+                title = buildMarkerCallsign(callsign, optString(p, "tStart", time));
             }
             // <contact callsign="WEAROS-1075_161710Z"/>
             detail.append("<contact callsign=\"")
@@ -386,8 +424,8 @@ public class BleCotBridge {
                             + "<event version=\"2.0\" uid=\"" + escapeXml(markerUid) + "\" type=\"" + escapeXml(type) + "\" "
                             + "time=\"" + escapeXml(time) + "\" start=\"" + escapeXml(start) + "\" stale=\"" + escapeXml(stale) + "\" "
                             + "how=\"h-g-i-g-o\" access=\"Undefined\">"
-                            + "<point lat=\"" + formatDouble(lat)
-                            + "\" lon=\"" + formatDouble(lon)
+                            + "<point lat=\"" + Double.toString(lat)
+                            + "\" lon=\"" + Double.toString(lon)
                             + "\" hae=\"" + formatDouble(hae)
                             + "\" ce=\"" + formatDouble(ce)
                             + "\" le=\"" + formatDouble(le) + "\"/>"
@@ -408,6 +446,23 @@ public class BleCotBridge {
                 }
             }
             dispatchCot("MARKER", xml);
+            if (fix != null && resolved != null) {
+                Map<String, Object> entity = new HashMap<>();
+                entity.put("uid", markerUid);
+                entity.put("type", type);
+                entity.put("lat", lat);
+                entity.put("lon", lon);
+                entity.put("callSign", title);
+                entity.put("isPoint", true);
+                entity.put("time", time);
+                entity.put("stale", stale);
+                synchronized (resolvedGarminMarkers) {
+                    resolvedGarminMarkers.put(markerUid, entity);
+                    while (resolvedGarminMarkers.size() > 256)
+                        resolvedGarminMarkers.remove(resolvedGarminMarkers.keySet().iterator().next());
+                }
+                resolved.accept(entity);
+            }
 
         } catch (Exception e) {
             LogX.e(TAG, "Error in sendMarkerCot(json)", e);
@@ -425,11 +480,6 @@ public class BleCotBridge {
     //         b) sendEmergencyCancel() builds the Cancel Alert cot xml event & sends it both externally & internally
     // =========================================================================================
     private void handleEmergencyCot(String envelopeJson) {
-        handleEmergencyCot(envelopeJson, null);
-    }
-
-    /** @param fixOverride location to use for the event, or null to use {@link #getEudFix()}. */
-    private void handleEmergencyCot(String envelopeJson, EudFix fixOverride) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -442,12 +492,24 @@ public class BleCotBridge {
 
             boolean isAlert  = "ALERT".equalsIgnoreCase(state);
             boolean isCancel = "CANCEL".equalsIgnoreCase(state);
-
+            String uid = optString(p, "uid", WatchMessageIds.id(env));
+            if (uid.isEmpty()) uid = UUID.randomUUID().toString();
+            p.put("uid", uid);
+            String key = "emergency:" + uid;
+            String stable = env.toString();
             if (isAlert) {
-                sendEmergencyAlert(envelopeJson, fixOverride);
+                requestPosition(key, true, fix -> sendEmergencyAlert(stable, fix),
+                        this::sendLocationlessEmergency);
             }
             if (isCancel) {
-                sendEmergencyCancel(envelopeJson, fixOverride);
+                positions.cancel(key);
+                positionSource.stopIfIdle();
+                PhonePosition fix = getValidEudFix();
+                if (fix != null) sendEmergencyCancel(stable, fix);
+                else {
+                    LogX.w(TAG, "Emergency cancellation has no positional fix; broadcasting text");
+                    sendChatViaAPI("Emergency cancelled by " + pluginCallsign() + " (location unavailable)");
+                }
             }
 
         } catch (Exception e) {
@@ -479,10 +541,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyAlert(String envelopeJson) {
-        sendEmergencyAlert(envelopeJson, null);
+        handleEmergencyCot(envelopeJson);
     }
 
-    private void sendEmergencyAlert(String envelopeJson, EudFix fixOverride) {
+    private void sendEmergencyAlert(String envelopeJson, PhonePosition fix) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -494,8 +556,9 @@ public class BleCotBridge {
             String uid = optString(p, "uid",
                     optString(env, "msg_id", UUID.randomUUID().toString()));
 
-            String time  = optString(p, "tStart", iso8601(System.currentTimeMillis()));
-            String stale = optString(p, "tStale", iso8601(System.currentTimeMillis() + 300000));
+            String time = iso8601(System.currentTimeMillis());
+            String start = optString(p, "tStart", time);
+            String stale = iso8601(System.currentTimeMillis() + 300000);
 
             String callsign = "";
             if (watchAsSource) {
@@ -520,10 +583,9 @@ public class BleCotBridge {
                     mapView.getContext().getString(com.atakmap.app.R.string.default_cot_type));
 
             // Point: use EUD location
-            EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
-
             StringBuilder detail = new StringBuilder();
             detail.append("<detail>");
+            detail.append(fix.detailXml(System.currentTimeMillis()));
 
             // Emergency payload
             detail.append("<emergency type='").append(escapeXml(desc)).append("'>")
@@ -547,10 +609,9 @@ public class BleCotBridge {
             String xml =
                     "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
                             + "<event version='2.0' uid='" + escapeXml(uid) + "' type='b-a-o' "
-                            + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale)
+                            + "time='" + escapeXml(time) + "' start='" + escapeXml(start) + "' stale='" + escapeXml(stale)
                             + "' how='h-e' access='Undefined'>"
-                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
-                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
+                            + fix.pointXml()
                             + detail
                             + "</event>";
 
@@ -563,10 +624,10 @@ public class BleCotBridge {
     }
 
     public void sendEmergencyCancel(String envelopeJson) {
-        sendEmergencyCancel(envelopeJson, null);
+        handleEmergencyCot(envelopeJson);
     }
 
-    private void sendEmergencyCancel(String envelopeJson, EudFix fixOverride) {
+    private void sendEmergencyCancel(String envelopeJson, PhonePosition fix) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -582,16 +643,14 @@ public class BleCotBridge {
 
             String callsign = watchAsSource ? optString(p, "callsign", pluginCallsign()) : pluginCallsign();
 
-            EudFix fix = (fixOverride != null) ? fixOverride : getEudFix();
-
             String xml =
                     "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
                             + "<event version='2.0' uid='" + escapeXml(uid) + "' type='b-a-o-can' "
                             + "time='" + escapeXml(time) + "' start='" + escapeXml(time) + "' stale='" + escapeXml(stale)
                             + "' how='h-e' access='Undefined'>"
-                            + "<point lat='" + fix.lat + "' lon='" + fix.lon + "' hae='" + fix.hae
-                            + "' ce='" + trimDouble(fix.ce) + "' le='" + trimDouble(fix.le) + "'/>"
+                            + fix.pointXml()
                             + "<detail>"
+                            + fix.detailXml(System.currentTimeMillis())
                             + "<emergency cancel='true'>" + escapeXml(callsign) + "</emergency>"
                             + "</detail>"
                             + "</event>";
@@ -721,6 +780,7 @@ public class BleCotBridge {
                 LogX.w(TAG, "handleJsonFromWearTak: missing msg_type");
                 return;
             }
+            if (!watchMessageIds.first(env)) return;
 
             switch (msgType) {
                 case "pli":
@@ -742,6 +802,9 @@ public class BleCotBridge {
                     // GeoChat
                     sendChat(envelopeJson);
                     break;
+                case "location_request":
+                    handleLocationRequest(env);
+                    break;
 
                 default:
                     // Anything else, do nothing
@@ -753,14 +816,57 @@ public class BleCotBridge {
         }
     }
 
-    public void handleGarminMessage(JSONObject envelope) {
-        if (envelope == null) return;
+    public boolean handleGarminMessage(JSONObject envelope) {
+        return handleGarminMessage(envelope, null);
+    }
+
+    boolean handleGarminMessage(JSONObject envelope, Consumer<Map<String, Object>> resolvedMarker) {
+        if (envelope == null) return false;
         String msgType = envelope.optString("msgType", "").trim();
         JSONObject payload = envelope.optJSONObject("payload");
         if (msgType.isEmpty() || payload == null) {
             LogX.w(TAG, "handleGarminMessage: missing msgType or payload");
-            return;
+            return false;
         }
+        if (!java.util.Arrays.asList("relay_hello", "marker", "emergency", "pli",
+                "location_request", "chat").contains(msgType)) return false;
+        if ("emergency".equals(msgType) && !"ALERT".equalsIgnoreCase(payload.optString("state"))
+                && !"CANCEL".equalsIgnoreCase(payload.optString("state"))) {
+            LogX.w(TAG, "Garmin emergency rejected: invalid state");
+            return false;
+        }
+        if (watchMessageIds.seen(envelope)) {
+            if ("marker".equals(msgType) && resolvedMarker != null) {
+                synchronized (resolvedGarminMarkers) {
+                    Map<String, Object> resolved = resolvedGarminMarkers.get(payload.optString("uid"));
+                    if (resolved != null) resolvedMarker.accept(resolved);
+                }
+            }
+            return true;
+        }
+        try {
+            if ("marker".equals(msgType)) {
+                if (!"phone".equals(payload.optString("locationSource"))
+                        && (payload.has("lat") || payload.has("lon"))) {
+                    WatchPointLocation point = new WatchPointLocation(payload, Double.NaN, Double.NaN,
+                            PhonePosition.UNKNOWN, PhonePosition.UNKNOWN, PhonePosition.UNKNOWN);
+                    if (!PhoneFixValidator.isUsable(point.lat, point.lon))
+                        throw new IllegalArgumentException("Invalid Garmin point");
+                }
+                if (payload.has("tStale")
+                        && Instant.parse(payload.getString("tStale")).toEpochMilli() <= System.currentTimeMillis())
+                    throw new IllegalArgumentException("Stale Garmin marker");
+            }
+            if ("chat".equals(msgType)) {
+                ChatReplyPayload reply = new ChatReplyPayload(payload);
+                GarminChatPolicy.reply(payload,
+                        Contacts.getInstance().getContactByUuid(reply.roomUid) instanceof GroupContact);
+            }
+        } catch (JSONException | IllegalArgumentException | java.time.DateTimeException error) {
+            LogX.w(TAG, "Garmin message rejected before acknowledgement", error);
+            return false;
+        }
+        if (!watchMessageIds.first(envelope)) return true;
 
         String envelopeJson = envelope.toString();
         switch (msgType) {
@@ -769,7 +875,7 @@ public class BleCotBridge {
                         + payload.optString("watchLabel", "Garmin watch"));
                 break;
             case "marker":
-                sendMarkerCot(envelopeJson, true);
+                sendMarkerCot(envelopeJson, true, resolvedMarker);
                 break;
             case "marker_delete":
                 LogX.w(TAG, "Garmin deletion rejected: no revision-gated paired point session");
@@ -782,19 +888,13 @@ public class BleCotBridge {
                         LogX.e(TAG, "Could not set Garmin emergency callsign", e);
                     }
                 }
-                // Cancellation must still clear the alert if the phone has lost its fix.
-                if ("CANCEL".equalsIgnoreCase(payload.optString("state", ""))) {
-                    handleEmergencyCot(envelope.toString(), getEudFix());
-                    break;
-                }
-                EudFix phoneFix = getValidEudFix();
-                if (phoneFix == null) {
-                    LogX.w(TAG, "Garmin emergency rejected: no valid phone location (state="
-                            + payload.optString("state", "") + ", uid="
-                            + payload.optString("uid", "") + ")");
-                    break;
-                }
-                handleEmergencyCot(envelope.toString(), phoneFix);
+                handleEmergencyCot(envelope.toString());
+                break;
+            case "pli":
+                sendStandardPli(envelopeJson);
+                break;
+            case "location_request":
+                handleLocationRequest(envelope);
                 break;
             case "chat":
                 try {
@@ -814,103 +914,52 @@ public class BleCotBridge {
                 LogX.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
                 break;
         }
+        return true;
     }
 
     public List<Map<String, Object>> getGarminEntitySnapshot(int requestedLimit) {
-        int limit = Math.max(1, Math.min(requestedLimit, 50));
-        ArrayList<Map<String, Object>> entities = new ArrayList<>();
-        MapView mv = mapView;
-        if (mv == null || mv.getRootGroup() == null) {
-            LogX.w(TAG, "getGarminEntitySnapshot: ATAK map is unavailable");
-            return entities;
-        }
-
-        Collection<MapItem> mapItems = mv.getRootGroup().getItemsRecursive();
-        if (mapItems == null) return entities;
-        GeoPoint self = null;
-        if (mv.getSelfMarker() != null) self = mv.getSelfMarker().getPoint();
-        if (self == null || !self.isValid()
-                || !PhoneFixValidator.isUsable(self.getLatitude(), self.getLongitude())) {
-            LogX.w(TAG, "getGarminEntitySnapshot: no valid self position");
-            return entities;
-        }
-        final ArrayList<double[]> distances = new ArrayList<>();
-        for (MapItem item : mapItems) {
-            if (!(item instanceof PointMapItem)) continue;
-            String uid = item.getUID();
-            String type = item.getType();
-            if (uid == null || uid.isEmpty() || uid.equals(myUid)
-                    || type == null || !type.startsWith("a-")) {
-                continue;
-            }
-
-            GeoPoint point = ((PointMapItem) item).getPoint();
-            if (point == null || !point.isValid()) continue;
-            double lat = point.getLatitude();
-            double lon = point.getLongitude();
-            if (Double.isNaN(lat) || Double.isInfinite(lat)
-                    || Double.isNaN(lon) || Double.isInfinite(lon)) {
-                continue;
-            }
-
-            Map<String, Object> entity = new HashMap<>();
-            entity.put("uid", uid);
-            entity.put("lat", lat);
-            entity.put("lon", lon);
-            entity.put("type", type);
-            entities.add(entity);
-            double distance = self.distanceTo(point);
-            distances.add(new double[]{distance, entities.size() - 1});
-        }
-
-        // Send the nearest units first so the watch map shows what is around the user.
-        java.util.Collections.sort(distances, (a, b) -> Double.compare(a[0], b[0]));
-        ArrayList<Map<String, Object>> nearest = new ArrayList<>();
-        for (int i = 0; i < distances.size() && nearest.size() < limit; i++) {
-            nearest.add(entities.get((int) distances.get(i)[1]));
-        }
-        LogX.i(TAG, "getGarminEntitySnapshot: " + nearest.size() + " of "
-                + entities.size() + " units selected (self=" + (self != null) + ")");
-        return nearest;
+        return new GarminMapEntitySource(mapView, this).snapshot(Math.max(1, Math.min(50, requestedLimit)));
     }
 
     // =========================================================================================
     // EUD LOCATION HELPERS
     // =========================================================================================
 
-    /** Gets the current ATAK self point, with a safe fallback when no usable fix exists. */
-    private EudFix getEudFix() {
-        EudFix fix = getValidEudFix();
-        return fix != null ? fix : EudFix.defaultFix();
+    private void requestPosition(String key, boolean continuous,
+            Consumer<PhonePosition> publish, Runnable unavailable) {
+        positionSource.start();
+        positionSource.refreshKnown();
+        positionSource.request();
+        positions.request(key, continuous, System.currentTimeMillis(), publish, unavailable);
     }
 
-    /** Like {@link #getEudFix()}, but returns null instead of a 0,0 placeholder when there is no usable fix. */
-    private EudFix getValidEudFix() {
+    private PhonePosition getValidEudFix() {
+        positionSource.refreshKnown();
+        return positions.best();
+    }
+
+    private void handleLocationRequest(JSONObject envelope) {
+        JSONObject payload = envelope.optJSONObject("payload");
+        if (payload == null) {
+            LogX.w(TAG, "Location request missing payload");
+            return;
+        }
+        // The matching marker message owns marker UID/coordinates. This signal refreshes PLI only.
+        sendStandardPli(envelope.toString());
+    }
+
+    private void sendLocationlessEmergency() {
+        String text = "EMERGENCY from " + pluginCallsign()
+                + ": location unavailable, acquiring GPS";
+        LogX.w(TAG, text);
         try {
-            MapView mv = mapView;
-            Marker sm = (mv != null) ? mv.getSelfMarker() : null;
-            GeoPoint gp = (sm != null) ? sm.getPoint() : null;
-            if (gp == null || !gp.isValid()) return null;
-
-            double lat = gp.getLatitude();
-            double lon = gp.getLongitude();
-            if (!PhoneFixValidator.isUsable(lat, lon)) return null;
-
-            CotPoint point = new CotPoint(gp);
-            return new EudFix(lat, lon, point.getHae(), 10.0, 10.0);
-        } catch (Throwable t) {
-            LogX.e(TAG, "getValidEudFix: exception", t);
-            return null;
-        }
-    }
-
-    private static class EudFix {
-        final double lat, lon, hae, ce, le;
-        EudFix(double lat, double lon, double hae, double ce, double le) {
-            this.lat = lat; this.lon = lon; this.hae = hae; this.ce = ce; this.le = le;
-        }
-        static EudFix defaultFix() {
-            return new EudFix(0.0, 0.0, 0.0, 9999999.0, 9999999.0);
+            sendChatViaAPI(text);
+            Toast.makeText(mapView.getContext(), text, Toast.LENGTH_LONG).show();
+        } catch (RuntimeException error) {
+            LogX.e(TAG, "Could not broadcast locationless emergency", error);
+            Toast.makeText(mapView.getContext(),
+                    "EMERGENCY: no location and text broadcast failed. Alert teammates by another means.",
+                    Toast.LENGTH_LONG).show();
         }
     }
 

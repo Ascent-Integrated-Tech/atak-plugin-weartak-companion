@@ -8,13 +8,14 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class GarminChatPolicyTest {
-    @Test public void capabilitiesAreSessionBoundAndDoNotClaimDeliveryOrGroups() throws Exception {
+    @Test public void capabilitiesAreSessionBoundAndEnableRetryAcknowledgementsWithoutGroups() throws Exception {
         Map<String, Object> status = GarminChatPolicy.relayStatus(new JSONObject()
                 .put("relaySession", "current-watch-session").put("bloodhoundVersion", 1));
         assertEquals("current-watch-session", status.get("relaySession"));
         assertEquals(false, status.get("chatGroups"));
-        assertEquals(false, status.get("reliableDelivery"));
-        assertEquals(5, status.size());
+        assertEquals(true, status.get("reliableDelivery"));
+        assertEquals(true, status.get("phoneLocation"));
+        assertEquals(6, status.size());
         assertEquals(1, status.get("bloodhoundVersion"));
         assertEquals(true, status.get("bloodhoundControl"));
     }
@@ -26,7 +27,7 @@ public class GarminChatPolicyTest {
             assertFalse(status.containsKey("bloodhoundVersion"));
             assertFalse(status.containsKey("bloodhoundControl"));
             assertEquals(false, status.get("chatGroups"));
-            assertEquals(false, status.get("reliableDelivery"));
+            assertEquals(true, status.get("reliableDelivery"));
         }
         Map<String, Object> ambiguous = GarminChatPolicy.relayStatus(
                 new JSONObject().put("relaySession", "watch").put("bloodhoundVersion", 1), false);
