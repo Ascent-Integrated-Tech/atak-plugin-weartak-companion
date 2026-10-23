@@ -450,6 +450,17 @@ public class BleServiceChangedRecoveryTest {
         assertTrue(delayed.isEmpty());
     }
 
+    @Test public void setupFailureBeforeReadyReportsErrorButNoDisconnectedStatus() throws Exception {
+        Peer peer = attach("AA:BB:CC:DD:EE:01");
+        callback.onConnectionStateChange(peer.gatt, 147, BluetoothProfile.STATE_DISCONNECTED);
+        drain();
+
+        assertEquals("GATT connection failed: 147", lastError());
+        assertTrue(peer.closed);
+        assertFalse(client.isConnected());
+        assertTrue("never-ready session has no connected->disconnected transition", status.isEmpty());
+    }
+
     private Peer connectReady(String address) throws Exception {
         Peer peer = attach(address);
         callback.onConnectionStateChange(peer.gatt, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_CONNECTED);
