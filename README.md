@@ -1040,6 +1040,43 @@ Behavior on the requested ATAK 5.8 phone is not established by this 5.6 target
 or by local compilation/unit tests.
 TPP must provide its normal TAK SDK/build credentials; no local SDK,
 local.properties, generated outputs, or signing key is included.
+### Phone-owned route navigation over bonded WearOS BLE
+
+Starting native ATAK route navigation in Traditional or Samsung Wearable mode
+starts the same route on the bonded watch. This is separate from Bloodhound:
+the phone remains the authority for waypoint advancement. Objective changes
+(including manual next/previous), geometry and route-detail edits are forwarded.
+The observer also reconciles every 1.5 seconds to recover replaced navigation
+managers, reconnects and rejected writes. Setup and Gateway modes do not enable
+this single-watch relay; Garmin route transport is unchanged.
+
+Newline-delimited JSON uses `msg_type=phone_route_navigation` with payload
+`version: 1`, UUID `sessionId`, increasing `sequence`, `action` (`start`,
+`progress`, `stop`) and `routeUid`. Every start/progress includes complete
+`routeCot` (`b-m-r` with matching UID) and zero-based `targetPointIndex` into
+the raw CoT link vertices. Geometry and objective are applied atomically:
+invalid vertices/counts are rejected, never filtered or renumbered. Bounds are
+10,000 vertices and 60 KiB per UTF-8 JSON frame after escaping. Errors are logged;
+no truncation or simplified replacement route is sent. Duplicate unchanged
+snapshots are suppressed. Reconnect sends a fresh start snapshot with the same
+navigation session and a higher sequence; a new ATAK navigation uses a new UUID.
+Writes are connection-generation fenced, and a queued write is not an
+acknowledgement of watch delivery.
+
+A matching stop ends only the phone-owned watch session. `completed: true` is
+sent on native final-vertex arrival, or when navigation stops after that native
+arrival; cancellation, route removal or mode shutdown sends `completed: false`.
+Companion never infers arrival from watch GPS or advances a waypoint itself.
+ATAK 5.6 uses its route-method arrival bubble: defaults are 10 m walking/swimming,
+20 m driving, 100 m watercraft and 1,000 m flying. `waypointBubble.<method>`
+preferences override these defaults; the native navigation loop adds the phone
+position's circular error when available. Intermediate progression is ATAK's
+arrival/departure logic, not a new Companion distance threshold. These details
+are verified against the 5.6 SDK (`RouteNavigator.getBubbleRadius`, its navigation
+loop, `RouteNavigationManager`, and `RouteNavigationViewModel.onArrivedAtPoint`).
+Paired hardware acceptance still needs a corresponding watch build: start,
+next/previous, edit, disconnect/reconnect, cancel, and final arrival.
+
 Paired BLE Bloodhound synchronization (WEARTAK-78)
 
 While connected to a bonded WearTAK watch, starting native ATAK Bloodhound

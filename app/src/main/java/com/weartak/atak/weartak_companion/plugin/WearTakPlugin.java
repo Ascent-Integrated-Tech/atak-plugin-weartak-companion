@@ -181,6 +181,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
+    private PhoneRouteNavigationBridge phoneRouteNavigation;
     private PhoneUserMapRelay phoneUserRelay;
     private WatchChatEchoSuppressor chatEchoSuppressor;
     private CotServiceRemote cotServiceRemote;
@@ -2068,9 +2069,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         phoneMarkerRelay.start(MapView.getMapView());
         phoneUserRelay = new PhoneUserMapRelay(bleClient);
         phoneUserRelay.start(MapView.getMapView());
+        if (!setupPurpose && !gatewayPurpose) {
+            phoneRouteNavigation = new PhoneRouteNavigationBridge(bleClient);
+        }
     }
 
     private void unregisterMapItemListener() {
+        if (phoneRouteNavigation != null) phoneRouteNavigation.close();
+        phoneRouteNavigation = null;
         if (phoneMarkerRelay != null) phoneMarkerRelay.stop();
         phoneMarkerRelay = null;
         if (phoneUserRelay != null) phoneUserRelay.stop();
