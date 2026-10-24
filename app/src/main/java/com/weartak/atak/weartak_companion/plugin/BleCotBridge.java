@@ -51,6 +51,7 @@ public class BleCotBridge {
     private final Map<String, Map<String, Object>> resolvedGarminMarkers = new java.util.LinkedHashMap<>();
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
+    private volatile SelfPliAugmenter selfPli;
     private ReceivedCotTiming receivedCotTiming;
     private final Set<String> watchEmergencyUids = new LinkedHashSet<>();
     private volatile WearTakBleClient bleClient;
@@ -116,6 +117,10 @@ public class BleCotBridge {
 
     void discardPendingCot() {
         cotQueue.invalidate();
+    }
+
+    void setSelfPliAugmenter(SelfPliAugmenter augmenter) {
+        selfPli = augmenter;
     }
 
     synchronized void startGatewayChatForwarding(Consumer<Bundle> forwarder) {
@@ -207,9 +212,12 @@ public class BleCotBridge {
             p.put("tStart", iso8601(System.currentTimeMillis()));
             p.put("tStale", iso8601(System.currentTimeMillis() + 120000));
 
+            SelfPliAugmenter self = selfPli;
             String xml = LegacyPliCot.build(p, myUid, pluginCallsign(),
                     fix.lat, fix.lon, fix.hae, fix.ce, fix.le,
-                    PhoneIdentity.metadata(mapView), System.currentTimeMillis())
+                    PhoneIdentity.metadata(mapView), System.currentTimeMillis(),
+                    self == null ? null : self.phoneRemarks(),
+                    self == null ? WatchSelfStatus.Contribution.NONE : self.current())
                     .replace("</detail>", fix.detailXml(System.currentTimeMillis()) + "</detail>");
 
             LogX.d(TAG, "Standard PLI XML:\n" + xml);

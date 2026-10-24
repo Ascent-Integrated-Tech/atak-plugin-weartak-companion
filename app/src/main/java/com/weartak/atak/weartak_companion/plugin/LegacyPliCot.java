@@ -25,14 +25,27 @@ final class LegacyPliCot {
     static String build(JSONObject payload, String phoneUid, String phoneCallsign,
                         double lat, double lon, double hae, double ce, double le,
                         Metadata phone, long now) {
+        return build(payload, phoneUid, phoneCallsign, lat, lon, hae, ce, le, phone, now,
+                null, WatchSelfStatus.Contribution.NONE);
+    }
+
+    /**
+     * Remarks are the phone user's ATAK remarks (including any Companion-managed watch line);
+     * watch physio is published only from a fresh SELF_STATUS contribution.
+     */
+    static String build(JSONObject payload, String phoneUid, String phoneCallsign,
+                        double lat, double lon, double hae, double ce, double le,
+                        Metadata phone, long now, String phoneRemarks,
+                        WatchSelfStatus.Contribution watch) {
         if (!PhoneFixValidator.isUsable(lat, lon)) {
             throw new IllegalArgumentException("PLI requires a real phone position");
         }
         String time = string(payload, "tStart", Instant.ofEpochMilli(now).toString());
         String stale = string(payload, "tStale", Instant.ofEpochMilli(now + 120000).toString());
-        StringBuilder detail = new StringBuilder("<remarks>")
-                .append(xml(string(payload, "remarks", "WearTAK PLI"))).append("</remarks>")
-                .append("<contact endpoint='*:-1:stcp' callsign='").append(xml(phoneCallsign))
+        StringBuilder detail = new StringBuilder();
+        String remarks = phoneRemarks == null ? "" : phoneRemarks.trim();
+        if (!remarks.isEmpty()) detail.append("<remarks>").append(xml(remarks)).append("</remarks>");
+        detail.append("<contact endpoint='*:-1:stcp' callsign='").append(xml(phoneCallsign))
                 .append("'/><__group role='").append(xml(phone.role)).append("' name='")
                 .append(xml(phone.team)).append("'/>");
         if (present(phone.platform) || present(phone.version) || present(phone.device) || present(phone.os)) {
@@ -49,10 +62,7 @@ final class LegacyPliCot {
         if (battery == null) battery = integer(payload, "bat");
         if (battery != null) detail.append("<status battery='")
                 .append(Math.max(0, Math.min(100, battery))).append("'/>");
-        Integer hr = integer(payload, "hr");
-        if (hr == null) hr = integer(payload, "heart_rate");
-        if (hr == null) hr = integer(payload, "heartRateBpm");
-        if (hr != null && hr > 0) detail.append("<physio hr='").append(hr).append("'/>");
+        if (watch != null) detail.append(watch.biometricsXml());
 
         return "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
                 + "<event version='2.0' uid='" + xml(phoneUid) + "' type='a-f-G-U-C' "

@@ -362,6 +362,32 @@ brand, version, device description and OS helpers, respecting the host's
 `dispatchTAKVersionNumber` preference; unavailable attributes are omitted.
 Raw Gateway watch CoT is not rewritten.
 
+WATCH PPE / PHYSIO ON PHONE SELF PLI (SELF_STATUS v1)
+
+While a bonded watch is connected, it may contribute its saved PPE level and fresh,
+opted-in heart rate to the phone's own PLI. The Companion advertises support with
+`relay_status.payload.selfStatus: 1` (Garmin) or `{"msg_type":"self_status_capability","version":1}`
+on WearOS BLE READY. The watch then sends full `self_status` snapshots: `{version:1, session,
+seq, deviceUid, model:"WEAROS"|"GARMIN"|"WATCHOS", ppe:null|{level, savedAt},
+physio:null|{hr, measuredAt}}`. `level` is exactly `None` or `MOPP 0`..`MOPP 4` (`None` is
+distinct from `MOPP 0`); drafts are never sent. Snapshots are accepted only from the
+current link, and `seq` must increase within a session. Garmin snapshots are best-effort hints
+and are not acknowledged.
+
+The phone appends one managed line to ATAK's `userRemarks`, e.g.
+`PPE: MOPP 2; HR: 72 bpm @ 18:15:30Z`. While the heart rate is fresh, it also adds
+`<biometrics version='1'><device sampleTime='…'><model>…</model><uid>WATCH_UID</uid><hr>72</hr></device></biometrics>`.
+Heart rate is fresh only while its actual `measuredAt` time is no more than 120 s old (30 s future
+skew allowed); receipt time is never used. The managed line and biometrics are removed when:
+- the watch disconnects;
+- trust is lost;
+- the route or plugin stops;
+- 300 s pass without a snapshot.
+
+Only the exact line the Companion wrote is removed; user remarks and edited lines are never
+touched. Legacy watch PLI no longer adds a generated "WearTAK PLI" remark or an untimed
+`<physio hr>`. Its remarks are the phone user's ATAK remarks.
+
 Optional watch `team` / `role` strings in settings snapshots and identity-only
 `settings_changed` deltas are retained in the existing observed settings snapshot.
 Missing, blank, null or non-string fields do not invent values or erase a known
