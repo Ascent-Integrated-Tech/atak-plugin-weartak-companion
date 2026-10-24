@@ -884,9 +884,30 @@ or conflicting destination can fall back to broadcast. Updated Garmin watches
 reject unsupported named groups before their shared outbox using the false capability.
 This adapter does not claim relay-result acknowledgements or TAK delivery.
 
-Garmin deletion is explicitly unsupported because this adapter has no negotiated
-shared-point revision session. It never emits the old external `t-x-d-d` deletion.
-WEARTAK-112's paired BLE local-only revision-gated removal remains intact.
+Garmin-origin marker deletion is a separate, explicitly negotiated best-effort
+extension (`relay_status.markerDelete: 1`). A `marker_delete` is accepted only for
+a marker whose `garmin-marker-` UID was recorded when that authenticated Garmin
+watch created it, from the same `watchUid`, with the current `relaySession`,
+`messageId`, and a current epoch-seconds `createdAt`. The UID prefix alone does
+not authorize deletion. Ownership is bounded to 256 markers and process memory;
+after a restart, an unrecorded marker fails closed until recreated by that watch.
+
+An accepted request is handed to ATAK's internal and external CoT dispatchers as
+a `t-x-d-d` event with a distinct event UID, the original point, and
+`<link uid="TARGET" relation="none" type="none"/><__forcedelete/>`. The sender's
+`relay_result` reports only phone handoff/enqueue, never remote TAK delivery.
+There is no durable delete outbox or retry; an offline TAK route may miss it.
+The local ATAK item is also removed only when its current type and point still
+match the point recorded from that watch; a mismatched item is left untouched
+and the request is rejected.
+Legacy Companion builds do not advertise `markerDelete`, so watches remain
+local-only with those peers. This does not change received network entity removal
+or WEARTAK-112's paired BLE local-only revision-gated removal.
+
+This scoped Garmin extension does not authorize deleting peer-created UIDs,
+non-Garmin map items, or markers merely because their UID has the expected prefix.
+Garmin deletion remains unsupported for any marker whose ownership record is
+missing, expired by bounded eviction, or belongs to another watch.
 Garmin settings use their existing settings adapter. Bloodhound now shares its
 existing native ATAK tracking backend with the Garmin Connect IQ transport.
 The later narrow live-entity reconciliation described below extends phone-to-Garmin

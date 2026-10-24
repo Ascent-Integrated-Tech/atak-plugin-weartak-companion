@@ -2157,7 +2157,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         && !link.sendForSession("entity", entity, relaySession)) {
                     LogX.w(TAG, "Unable to return phone-resolved Garmin marker");
                 }
-            });
+            }, link != null && link.isCurrent() ? link.watchUid() : null,
+                    link != null && link.isCurrent() ? link.relaySession() : null);
             JSONObject payload = envelope.optJSONObject("payload");
             String messageId = WatchMessageIds.id(envelope);
             if (payload != null && !messageId.isEmpty() && link != null && link.isCurrent()) {

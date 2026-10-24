@@ -50,6 +50,16 @@ public class WatchMessageIdsTest {
         assertEquals(false, result.get("ok"));
     }
 
+    @Test public void failedQueueHandoffCanAcceptSameMessageIdOnRetry() throws Exception {
+        WatchMessageIds ids = new WatchMessageIds();
+        JSONObject deletion = new JSONObject().put("msgType", "marker_delete")
+                .put("payload", new JSONObject().put("messageId", "delete-1"));
+        assertTrue(ids.first(deletion));
+        assertFalse(ids.first(deletion));
+        ids.forget(deletion);
+        assertTrue(ids.first(deletion));
+    }
+
     @Test public void stablePayloadIdWinsOverRouteSpecificEnvelopeId() throws Exception {
         WatchMessageIds ids = new WatchMessageIds();
         assertTrue(ids.first(envelope("stable", "one").put("messageId", "iq-route-id")));
