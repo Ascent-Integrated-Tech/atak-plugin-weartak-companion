@@ -30,6 +30,9 @@ final class SelfPliAugmenter {
     private final Clock clock;
     private final Runnable refresh = this::refresh;
     private WatchSelfStatus.Contribution published;
+    private String boundLink;
+    private String boundSession;
+    private String boundDeviceUid;
 
     SelfPliAugmenter(Host host, Clock clock) {
         this.host = host;
@@ -38,18 +41,52 @@ final class SelfPliAugmenter {
 
     /** Removes contributions left behind by a previous process before any watch connects. */
     synchronized void start() {
+        boundLink = boundSession = boundDeviceUid = null;
         state.clear();
         published = null;
         refresh();
     }
 
+    /**
+     * Binds snapshots to the current authorized transport generation. A null expected session or
+     * device UID is locked to the first accepted snapshot on this link. Rebinding to a different
+     * link removes the previous link's contribution.
+     */
+    synchronized void bind(String linkId, String expectedSession, String expectedDeviceUid) {
+        if (linkId == null || linkId.isEmpty()) return;
+        boolean sameLink = linkId.equals(boundLink)
+                && (expectedSession == null || expectedSession.equals(boundSession))
+                && (expectedDeviceUid == null || expectedDeviceUid.equals(boundDeviceUid));
+        if (sameLink) return;
+        if (boundLink != null) clear("watch link changed");
+        boundLink = linkId;
+        boundSession = expectedSession;
+        boundDeviceUid = expectedDeviceUid;
+    }
+
     synchronized boolean accept(String linkId, JSONObject payload) {
+        if (boundLink == null || !boundLink.equals(linkId)) {
+            host.log("Watch self_status rejected: link is not current");
+            return false;
+        }
+        String session = payload == null ? null : payload.optString("session", null);
+        String deviceUid = payload == null ? null : payload.optString("deviceUid", null);
+        if (boundSession != null && !boundSession.equals(session)) {
+            host.log("Watch self_status rejected: session is not current");
+            return false;
+        }
+        if (boundDeviceUid != null && !boundDeviceUid.equals(deviceUid)) {
+            host.log("Watch self_status rejected: device is not the authorized watch");
+            return false;
+        }
         try {
             if (!state.accept(linkId, payload, clock.now())) return false;
         } catch (IllegalArgumentException error) {
             host.log("Watch self_status rejected: " + error.getMessage());
             return false;
         }
+        boundSession = session;
+        boundDeviceUid = deviceUid;
         refresh();
         return true;
     }
@@ -57,6 +94,7 @@ final class SelfPliAugmenter {
     synchronized void clear(String reason) {
         if (published != null && !published.isEmpty())
             host.log("Removing watch PPE/physio from phone PLI: " + reason);
+        boundLink = boundSession = boundDeviceUid = null;
         state.clear();
         refresh();
     }

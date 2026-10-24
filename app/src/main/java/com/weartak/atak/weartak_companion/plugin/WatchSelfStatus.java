@@ -20,56 +20,112 @@ final class WatchSelfStatus {
     static final long PHYSIO_MAX_AGE_MS = 120_000L;
     static final long PHYSIO_FUTURE_SKEW_MS = 30_000L;
     static final long SNAPSHOT_TTL_MS = 300_000L;
+    static final double SKIN_TEMP_MIN_F = 59.0;
+    static final double SKIN_TEMP_MAX_F = 113.0;
     static final List<String> PPE_LEVELS = Arrays.asList(
             "None", "MOPP 0", "MOPP 1", "MOPP 2", "MOPP 3", "MOPP 4");
     static final List<String> MODELS = Arrays.asList("WEAROS", "GARMIN", "WATCHOS");
     private static final DateTimeFormatter CLOCK =
             DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US).withZone(ZoneOffset.UTC);
 
+    /** One physio metric with its actual measurement time. */
+    static final class Sample {
+        final double value;
+        final long measuredAt;
+
+        Sample(double value, long measuredAt) {
+            this.value = value;
+            this.measuredAt = measuredAt;
+        }
+
+        String time() { return Instant.ofEpochMilli(measuredAt).toString(); }
+
+        String clock() { return CLOCK.format(Instant.ofEpochMilli(measuredAt)) + "Z"; }
+    }
+
     static final class Contribution {
-        static final Contribution NONE = new Contribution(null, null, null, null, 0L, Long.MAX_VALUE);
+        static final Contribution NONE =
+                new Contribution(null, null, null, null, null, null, Long.MAX_VALUE);
 
         final String ppeLevel;
         final String deviceUid;
         final String model;
-        final Integer hr;
-        final long measuredAt;
+        /** Fresh samples only; null when absent, stale or not yet plausible. */
+        final Sample hr;
+        final Sample skinTempF;
+        final Sample exertion;
         /** Wall-clock time when this contribution changes without a new message. */
         final long nextChangeAt;
 
-        Contribution(String ppeLevel, String deviceUid, String model, Integer hr,
-                     long measuredAt, long nextChangeAt) {
+        Contribution(String ppeLevel, String deviceUid, String model, Sample hr, Sample skinTempF,
+                     Sample exertion, long nextChangeAt) {
             this.ppeLevel = ppeLevel;
             this.deviceUid = deviceUid;
             this.model = model;
             this.hr = hr;
-            this.measuredAt = measuredAt;
+            this.skinTempF = skinTempF;
+            this.exertion = exertion;
             this.nextChangeAt = nextChangeAt;
         }
 
-        boolean isEmpty() { return ppeLevel == null && hr == null; }
+        boolean isEmpty() { return ppeLevel == null && !hasPhysio(); }
 
-        /** Exact shared remarks line, or empty when the watch contributes nothing. */
+        boolean hasPhysio() { return hr != null || skinTempF != null || exertion != null; }
+
+        String hrText() { return Long.toString(Math.round(hr.value)); }
+
+        String skinTempText() {
+            // Established physiology-dashboard <skt> unit: Fahrenheit for WEAROS, Celsius otherwise.
+            double value = "WEAROS".equals(model) ? skinTempF.value : (skinTempF.value - 32.0) * 5.0 / 9.0;
+            return String.format(Locale.US, "%.1f", value);
+        }
+
+        String exertionText() { return String.format(Locale.US, "%.2f", exertion.value); }
+
+        /** Newest fresh physio sample time, or null without physio. */
+        String sampleTime() {
+            Sample newest = null;
+            for (Sample sample : new Sample[] {hr, skinTempF, exertion}) {
+                if (sample != null && (newest == null || sample.measuredAt > newest.measuredAt))
+                    newest = sample;
+            }
+            return newest == null ? null : newest.time();
+        }
+
+        /** Exact shared remarks line, or empty when the watch contributes nothing visible. */
         String remarksLine() {
             StringBuilder line = new StringBuilder();
-            if (ppeLevel != null) line.append("PPE: ").append(ppeLevel);
-            if (hr != null) {
-                if (line.length() > 0) line.append("; ");
-                line.append("HR: ").append(hr).append(" bpm @ ")
-                        .append(CLOCK.format(Instant.ofEpochMilli(measuredAt))).append('Z');
-            }
+            // Remarks token is the user's compact form (MOPP0..MOPP4); the wire level keeps its space.
+            if (ppeLevel != null && !"None".equals(ppeLevel)) line.append(ppeLevel.replace(" ", ""));
+            if (hr != null) segment(line, "HR: " + hrText() + " bpm @ " + hr.clock());
+            if (skinTempF != null) segment(line, "Skin: "
+                    + String.format(Locale.US, "%.1f", skinTempF.value) + "F @ " + skinTempF.clock());
+            if (exertion != null) segment(line, "Exert: " + Math.round(exertion.value * 100)
+                    + "% @ " + exertion.clock());
             return line.toString();
         }
 
-        String sampleTime() { return hr == null ? null : Instant.ofEpochMilli(measuredAt).toString(); }
+        private static void segment(StringBuilder line, String text) {
+            if (line.length() > 0) line.append("; ");
+            line.append(text);
+        }
 
-        /** Existing physiology-dashboard schema with version and sample-time attributes. */
+        /** One device entry for the shared biometrics element; each metric carries its own time. */
         String biometricsXml() {
-            if (hr == null) return "";
-            return "<biometrics version='" + VERSION + "'><device sampleTime='"
-                    + LegacyPliCot.xml(sampleTime()) + "'><model>" + LegacyPliCot.xml(model)
-                    + "</model><uid>" + LegacyPliCot.xml(deviceUid) + "</uid><hr>" + hr
-                    + "</hr></device></biometrics>";
+            if (!hasPhysio()) return "";
+            StringBuilder xml = new StringBuilder("<biometrics version='").append(VERSION)
+                    .append("'><device sampleTime='").append(LegacyPliCot.xml(sampleTime()))
+                    .append("'><model>").append(LegacyPliCot.xml(model)).append("</model><uid>")
+                    .append(LegacyPliCot.xml(deviceUid)).append("</uid>");
+            if (hr != null) metric(xml, "hr", hr, hrText());
+            if (skinTempF != null) metric(xml, "skt", skinTempF, skinTempText());
+            if (exertion != null) metric(xml, "exert", exertion, exertionText());
+            return xml.append("</device></biometrics>").toString();
+        }
+
+        private static void metric(StringBuilder xml, String name, Sample sample, String value) {
+            xml.append('<').append(name).append(" sampleTime='").append(sample.time()).append("'>")
+                    .append(value).append("</").append(name).append('>');
         }
 
         @Override public boolean equals(Object other) {
@@ -87,8 +143,9 @@ final class WatchSelfStatus {
     private String deviceUid;
     private String model;
     private String ppeLevel;
-    private Integer hr;
-    private long measuredAt;
+    private Sample hr;
+    private Sample skinTempF;
+    private Sample exertion;
     private long receivedAt;
 
     /**
@@ -110,27 +167,49 @@ final class WatchSelfStatus {
         String level = null;
         Object ppe = payload.opt("ppe");
         if (ppe instanceof JSONObject) {
-            level = ((JSONObject) ppe).optString("level", "");
+            JSONObject saved = (JSONObject) ppe;
+            level = saved.optString("level", "");
             if (!PPE_LEVELS.contains(level)) throw new IllegalArgumentException("Invalid PPE level");
-            instant(((JSONObject) ppe).optString("savedAt", ""));
+            // savedAt is null for legacy saves whose time is unknown; it is never fabricated.
+            if (!saved.has("savedAt")) throw new IllegalArgumentException("Missing savedAt");
+            Object savedAt = saved.opt("savedAt");
+            if (savedAt != null && savedAt != JSONObject.NULL) {
+                if (!(savedAt instanceof String)) throw new IllegalArgumentException("Invalid savedAt");
+                instant((String) savedAt);
+            }
         } else if (ppe != null && ppe != JSONObject.NULL) {
             throw new IllegalArgumentException("Invalid PPE");
         }
 
-        Integer nextHr = null;
-        long nextMeasuredAt = 0L;
+        Sample nextHr = null, nextSkin = null, nextExertion = null;
         Object physio = payload.opt("physio");
         if (physio instanceof JSONObject) {
-            Object rate = ((JSONObject) physio).opt("hr");
-            long bpm = wholeNumber(rate);
-            if (bpm < 20 || bpm > 250) throw new IllegalArgumentException("Invalid heart rate");
-            nextHr = (int) bpm;
-            nextMeasuredAt = instant(((JSONObject) physio).optString("measuredAt", ""));
+            JSONObject p = (JSONObject) physio;
+            if (p.has("hr")) {
+                long bpm = wholeNumber(p.opt("hr"));
+                if (bpm < 20 || bpm > 250) throw new IllegalArgumentException("Invalid heart rate");
+                nextHr = new Sample(bpm, instant(p.optString("measuredAt", "")));
+            }
+            if (p.has("sktF")) {
+                double f = finite(p.opt("sktF"));
+                if (f < SKIN_TEMP_MIN_F || f > SKIN_TEMP_MAX_F)
+                    throw new IllegalArgumentException("Invalid skin temperature");
+                nextSkin = new Sample(f, instant(p.optString("sktFMeasuredAt", "")));
+            }
+            if (p.has("exert")) {
+                double fraction = finite(p.opt("exert"));
+                if (fraction < 0 || fraction > 1) throw new IllegalArgumentException("Invalid exertion");
+                nextExertion = new Sample(fraction, instant(p.optString("exertMeasuredAt", "")));
+            }
+            if (nextHr == null && nextSkin == null && nextExertion == null)
+                throw new IllegalArgumentException("Empty physio");
         } else if (physio != null && physio != JSONObject.NULL) {
             throw new IllegalArgumentException("Invalid physio");
         }
 
-        if (!linkId.equals(link) || !nextSession.equals(session)) {
+        if (linkId.equals(link) && !nextSession.equals(session))
+            throw new IllegalArgumentException("Session changed on the same link");
+        if (!linkId.equals(link)) {
             link = linkId;
             session = nextSession;
             seq = -1;
@@ -142,7 +221,8 @@ final class WatchSelfStatus {
         model = nextModel;
         ppeLevel = level;
         hr = nextHr;
-        measuredAt = nextMeasuredAt;
+        skinTempF = nextSkin;
+        exertion = nextExertion;
         receivedAt = now;
         return true;
     }
@@ -150,8 +230,8 @@ final class WatchSelfStatus {
     synchronized void clear() {
         link = session = deviceUid = model = ppeLevel = null;
         seq = -1;
-        hr = null;
-        measuredAt = receivedAt = 0L;
+        hr = skinTempF = exertion = null;
+        receivedAt = 0L;
     }
 
     synchronized Contribution current(long now) {
@@ -161,18 +241,24 @@ final class WatchSelfStatus {
             clear();
             return Contribution.NONE;
         }
-        long next = expiresAt;
-        Integer freshHr = null;
-        if (hr != null) {
-            long physioExpires = measuredAt + PHYSIO_MAX_AGE_MS;
-            if (measuredAt > now + PHYSIO_FUTURE_SKEW_MS) {
-                next = Math.min(next, measuredAt - PHYSIO_FUTURE_SKEW_MS);
-            } else if (now < physioExpires) {
-                freshHr = hr;
-                next = Math.min(next, physioExpires);
-            }
+        long[] next = {expiresAt};
+        Sample freshHr = fresh(hr, now, next);
+        Sample freshSkin = fresh(skinTempF, now, next);
+        Sample freshExertion = fresh(exertion, now, next);
+        return new Contribution(ppeLevel, deviceUid, model, freshHr, freshSkin, freshExertion, next[0]);
+    }
+
+    /** Returns the sample while its actual measurement time is fresh, tracking its next change. */
+    private static Sample fresh(Sample sample, long now, long[] next) {
+        if (sample == null) return null;
+        if (sample.measuredAt > now + PHYSIO_FUTURE_SKEW_MS) {
+            next[0] = Math.min(next[0], sample.measuredAt - PHYSIO_FUTURE_SKEW_MS);
+            return null;
         }
-        return new Contribution(ppeLevel, deviceUid, model, freshHr, measuredAt, next);
+        long expires = sample.measuredAt + PHYSIO_MAX_AGE_MS;
+        if (now >= expires) return null;
+        next[0] = Math.min(next[0], expires);
+        return sample;
     }
 
     private static boolean text(String value, int max) {
@@ -196,6 +282,14 @@ final class WatchSelfStatus {
         } catch (java.time.DateTimeException error) {
             throw new IllegalArgumentException("Invalid timestamp", error);
         }
+    }
+
+    private static double finite(Object value) {
+        if (!(value instanceof Number)) throw new IllegalArgumentException("Invalid number");
+        double number = ((Number) value).doubleValue();
+        if (Double.isNaN(number) || Double.isInfinite(number))
+            throw new IllegalArgumentException("Invalid number");
+        return number;
     }
 
     private static long wholeNumber(Object value) {

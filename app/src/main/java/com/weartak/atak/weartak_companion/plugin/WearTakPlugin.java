@@ -754,6 +754,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (!bleClient.isConnected()) return;
                     phoneSettingsPushedThisConnection = false;
                     settingsModeLoadedThisConnection = false;
+                    if (selfPli != null && !gatewayPurpose)
+                        selfPli.bind("wearos:" + bleClient.getReadySession(), null, null);
                     sendSelfStatusCapability();
                     if (!setupPurpose && phoneManagedSettingsRequested) {
                         startPhoneSettingsHandshake();
@@ -2125,6 +2127,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             bloodhoundBridge.disconnected();
                     }
                     if (link != null && link.isCurrent()) {
+                        String watchUid = hello.optString("watchUid", "");
+                        if (selfPli != null && !gatewayPurpose && !watchUid.isEmpty()
+                                && link.relaySession().equals(hello.optString("relaySession")))
+                            selfPli.bind("garmin:" + link.relaySession(), link.relaySession(), watchUid);
                         if (link.send("relay_status", status)) {
                             if (status.containsKey("unitPrefs")) {
                                 garminUnitLink = link;

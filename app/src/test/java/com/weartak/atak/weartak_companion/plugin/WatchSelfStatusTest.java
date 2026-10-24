@@ -25,19 +25,22 @@ public class WatchSelfStatusTest {
         WatchSelfStatus state = new WatchSelfStatus();
         assertTrue(state.accept("link", snapshot("s1", 0, "MOPP 2", 72, NOW), NOW));
         WatchSelfStatus.Contribution c = state.current(NOW);
-        assertEquals("PPE: MOPP 2; HR: 72 bpm @ 18:15:30Z", c.remarksLine());
+        assertEquals("MOPP2; HR: 72 bpm @ 18:15:30Z", c.remarksLine());
         assertEquals("<biometrics version='1'><device sampleTime='2026-10-22T18:15:30Z'>"
-                + "<model>WEAROS</model><uid>WATCH-UID</uid><hr>72</hr></device></biometrics>",
+                + "<model>WEAROS</model><uid>WATCH-UID</uid><hr sampleTime='2026-10-22T18:15:30Z'>72</hr></device></biometrics>",
                 c.biometricsXml());
     }
 
-    @Test public void noneIsDistinctFromMoppZeroAndNullPpeContributesNothing() throws Exception {
+    @Test public void noneIsDistinctFromMoppZeroButOmittedFromRemarks() throws Exception {
         WatchSelfStatus state = new WatchSelfStatus();
         state.accept("link", snapshot("s1", 0, "None", null, 0), NOW);
-        assertEquals("PPE: None", state.current(NOW).remarksLine());
-        state.accept("link", snapshot("s1", 1, "MOPP 0", null, 0), NOW);
-        assertEquals("PPE: MOPP 0", state.current(NOW).remarksLine());
-        state.accept("link", snapshot("s1", 2, null, null, 0), NOW);
+        assertEquals("", state.current(NOW).remarksLine());
+        assertEquals("None", state.current(NOW).ppeLevel);
+        state.accept("link", snapshot("s1", 1, "None", 64, NOW), NOW);
+        assertEquals("HR: 64 bpm @ 18:15:30Z", state.current(NOW).remarksLine());
+        state.accept("link", snapshot("s1", 2, "MOPP 0", null, 0), NOW);
+        assertEquals("MOPP0", state.current(NOW).remarksLine());
+        state.accept("link", snapshot("s1", 3, null, null, 0), NOW);
         assertTrue(state.current(NOW).isEmpty());
         assertEquals("", state.current(NOW).biometricsXml());
     }
@@ -47,11 +50,11 @@ public class WatchSelfStatusTest {
         long measured = NOW - 119_000;
         state.accept("link", snapshot("s1", 0, "MOPP 1", 80, measured), NOW);
         WatchSelfStatus.Contribution fresh = state.current(NOW);
-        assertEquals(Integer.valueOf(80), fresh.hr);
+        assertEquals(80, fresh.hr.value, 0);
         assertEquals(measured + WatchSelfStatus.PHYSIO_MAX_AGE_MS, fresh.nextChangeAt);
         WatchSelfStatus.Contribution expired = state.current(NOW + 1_000);
         assertNull(expired.hr);
-        assertEquals("PPE: MOPP 1", expired.remarksLine());
+        assertEquals("MOPP1", expired.remarksLine());
         assertEquals("", expired.biometricsXml());
 
         state.accept("link", snapshot("s1", 1, null, 80, NOW - 121_000), NOW);
@@ -64,7 +67,7 @@ public class WatchSelfStatusTest {
         assertNull(state.current(NOW).hr);
         assertEquals(NOW + 1_000, state.current(NOW).nextChangeAt);
         state.accept("link", snapshot("s1", 1, null, 70, NOW + 30_000), NOW);
-        assertEquals(Integer.valueOf(70), state.current(NOW).hr);
+        assertEquals(70, state.current(NOW).hr.value, 0);
     }
 
     @Test public void snapshotExpiresWithoutKeepalive() throws Exception {
@@ -76,16 +79,20 @@ public class WatchSelfStatusTest {
         assertTrue("expiry does not revive", state.current(NOW).isEmpty());
     }
 
-    @Test public void sequenceIsStrictWithinSessionAndNewSessionOrLinkReplaces() throws Exception {
+    @Test public void sequenceIsStrictAndSessionIsFixedPerLink() throws Exception {
         WatchSelfStatus state = new WatchSelfStatus();
         assertTrue(state.accept("link", snapshot("s1", 5, "MOPP 3", null, 0), NOW));
         assertFalse(state.accept("link", snapshot("s1", 5, "MOPP 1", null, 0), NOW));
         assertFalse(state.accept("link", snapshot("s1", 4, "MOPP 1", null, 0), NOW));
-        assertEquals("PPE: MOPP 3", state.current(NOW).remarksLine());
-        assertTrue(state.accept("link", snapshot("s2", 0, "MOPP 1", null, 0), NOW));
-        assertEquals("PPE: MOPP 1", state.current(NOW).remarksLine());
+        assertEquals("MOPP3", state.current(NOW).remarksLine());
+        try {
+            state.accept("link", snapshot("s2", 9, "MOPP 1", null, 0), NOW);
+            fail("a different session on the same link must not replace current state");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("MOPP3", state.current(NOW).remarksLine());
+        }
         assertTrue(state.accept("other-link", snapshot("s2", 0, "MOPP 2", null, 0), NOW));
-        assertEquals("PPE: MOPP 2", state.current(NOW).remarksLine());
+        assertEquals("MOPP2", state.current(NOW).remarksLine());
     }
 
     @Test public void invalidSnapshotsAreRejectedWithoutChangingState() throws Exception {
@@ -111,9 +118,56 @@ public class WatchSelfStatusTest {
                 state.accept("link", payload, NOW);
                 fail("accepted " + payload);
             } catch (IllegalArgumentException expected) {
-                assertEquals("PPE: MOPP 2", state.current(NOW).remarksLine());
+                assertEquals("MOPP2", state.current(NOW).remarksLine());
             }
         }
+    }
+
+    @Test public void optionalSkinTemperatureAndExertionUseTheirOwnSampleTimes() throws Exception {
+        WatchSelfStatus state = new WatchSelfStatus();
+        JSONObject payload = snapshot("s1", 0, "MOPP 1", null, 0).put("physio", new JSONObject()
+                .put("sktF", 93.44).put("sktFMeasuredAt", "2026-10-22T18:14:00Z")
+                .put("exert", 0.456).put("exertMeasuredAt", "2026-10-22T18:15:30Z"));
+        assertTrue(state.accept("link", payload, NOW));
+        WatchSelfStatus.Contribution c = state.current(NOW);
+        assertNull(c.hr);
+        assertEquals("MOPP1; Skin: 93.4F @ 18:14:00Z; Exert: 46% @ 18:15:30Z", c.remarksLine());
+        assertEquals("<biometrics version='1'><device sampleTime='2026-10-22T18:15:30Z'>"
+                + "<model>WEAROS</model><uid>WATCH-UID</uid>"
+                + "<skt sampleTime='2026-10-22T18:14:00Z'>93.4</skt>"
+                + "<exert sampleTime='2026-10-22T18:15:30Z'>0.46</exert></device></biometrics>",
+                c.biometricsXml());
+        WatchSelfStatus.Contribution later = state.current(NOW + 31_000);
+        assertNull("skin sample is 151 s old", later.skinTempF);
+        assertNotNull(later.exertion);
+
+        JSONObject garmin = snapshot("s1", 1, null, null, 0).put("model", "GARMIN")
+                .put("physio", new JSONObject().put("sktF", 95).put("sktFMeasuredAt", "2026-10-22T18:15:30Z"));
+        state.accept("link", garmin, NOW);
+        assertEquals("non-WEAROS skt is Celsius", "35.0", state.current(NOW).skinTempText());
+
+        JSONObject[] bad = {
+                snapshot("s1", 2, null, null, 0).put("physio", new JSONObject()),
+                snapshot("s1", 2, null, null, 0).put("physio", new JSONObject().put("hr", JSONObject.NULL)),
+                snapshot("s1", 2, null, null, 0).put("physio", new JSONObject().put("exert", 1.1)
+                        .put("exertMeasuredAt", "2026-10-22T18:15:30Z")),
+                snapshot("s1", 2, null, null, 0).put("physio", new JSONObject().put("sktF", 120)
+                        .put("sktFMeasuredAt", "2026-10-22T18:15:30Z")),
+                snapshot("s1", 2, null, null, 0).put("physio", new JSONObject().put("exert", 0.5)),
+        };
+        for (JSONObject invalid : bad) {
+            try {
+                state.accept("link", invalid, NOW);
+                fail("accepted " + invalid);
+            } catch (IllegalArgumentException expected) { }
+        }
+    }
+
+    @Test public void legacySavedPpeWithoutSaveTimeIsAccepted() throws Exception {
+        WatchSelfStatus state = new WatchSelfStatus();
+        assertTrue(state.accept("link", snapshot("s1", 0, null, null, 0).put("ppe",
+                new JSONObject().put("level", "MOPP 3").put("savedAt", JSONObject.NULL)), NOW));
+        assertEquals("MOPP3", state.current(NOW).remarksLine());
     }
 
     @Test public void clearRemovesEverything() throws Exception {

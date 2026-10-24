@@ -62,7 +62,15 @@ final class LegacyPliCot {
         if (battery == null) battery = integer(payload, "bat");
         if (battery != null) detail.append("<status battery='")
                 .append(Math.max(0, Math.min(100, battery))).append("'/>");
-        if (watch != null) detail.append(watch.biometricsXml());
+        if (watch != null && watch.model != null) {
+            detail.append(watch.biometricsXml());
+        } else {
+            // Watches without an active SELF_STATUS snapshot keep their existing legacy heart rate.
+            Integer hr = integer(payload, "hr");
+            if (hr == null) hr = integer(payload, "heart_rate");
+            if (hr == null) hr = integer(payload, "heartRateBpm");
+            if (hr != null && hr > 0) detail.append("<physio hr='").append(hr).append("'/>");
+        }
 
         return "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
                 + "<event version='2.0' uid='" + xml(phoneUid) + "' type='a-f-G-U-C' "
