@@ -31,6 +31,8 @@ final class GarminChatPolicy {
         status.put("phoneLocation", true);
         status.put("chatGroups", false);
         status.put("selfStatus", WatchSelfStatus.VERSION);
+        if (validWatchUid(hello.opt("watchUid")))
+            status.put("markerDelete", GarminMarkerDelete.CAPABILITY_VERSION);
         Object routeNavigation = hello.opt("routeNavigationVersion");
         if (bloodhoundSupported && routeNavigation instanceof Number
                 && ((Number) routeNavigation).doubleValue() == 1.0d
@@ -44,6 +46,16 @@ final class GarminChatPolicy {
             status.put("bloodhoundControl", true);
         }
         return status;
+    }
+
+    private static boolean validWatchUid(Object value) {
+        if (!(value instanceof String)) return false;
+        String uid = (String) value;
+        if (uid.trim().isEmpty() || uid.length() > 128) return false;
+        for (int i = 0; i < uid.length(); i++) {
+            if (Character.isISOControl(uid.charAt(i))) return false;
+        }
+        return true;
     }
 
     static ChatReplyPayload reply(JSONObject payload, boolean groupContact) {

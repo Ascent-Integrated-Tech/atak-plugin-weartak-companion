@@ -16,6 +16,8 @@ import com.atakmap.android.contact.Contacts;
 import com.atakmap.android.contact.GroupContact;
 import com.atakmap.android.contact.IndividualContact;
 import com.atakmap.android.cot.CotMapComponent;
+import com.atakmap.android.maps.MapItem;
+import com.atakmap.android.maps.Marker;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.comms.CotDispatcher;
 import com.atakmap.coremap.cot.event.CotEvent;
@@ -49,6 +51,7 @@ public class BleCotBridge {
     private String myUid;
     private final java.util.Set<String> garminOriginMarkers = new java.util.LinkedHashSet<>();
     private final Map<String, Map<String, Object>> resolvedGarminMarkers = new java.util.LinkedHashMap<>();
+    private final GarminMarkerDelete garminMarkerDeletes = new GarminMarkerDelete();
     private Boolean watchAsSource = false;
     private volatile PhoneMarkerRelay phoneMarkerPolicy;
     private volatile SelfPliAugmenter selfPli;
@@ -232,10 +235,19 @@ public class BleCotBridge {
     // =========================================================================================
     // DISPATCH (internal + external)
     // =========================================================================================
-    private void dispatchCot(String label, String xml) {
-        if (!cotQueue.submit(() -> dispatchCotOnWorker(label, xml))) {
+    private boolean dispatchCot(String label, String xml) {
+        return dispatchCot(label, xml, null);
+    }
+
+    private boolean dispatchCot(String label, String xml, Runnable afterDispatch) {
+        if (!cotQueue.submit(() -> {
+            dispatchCotOnWorker(label, xml);
+            if (afterDispatch != null) afterDispatch.run();
+        })) {
             LogX.w(TAG, "dispatchCot(" + label + "): connection session stopped");
+            return false;
         }
+        return true;
     }
 
     private void dispatchCotOnWorker(String label, String xml) {
@@ -296,6 +308,11 @@ public class BleCotBridge {
 
     private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation,
             Consumer<Map<String, Object>> resolved) {
+        sendMarkerCot(envelopeJson, usePayloadLocation, resolved, null, null);
+    }
+
+    private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation,
+            Consumer<Map<String, Object>> resolved, String watchUid, String relaySession) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject payload = env.getJSONObject("payload");
@@ -305,10 +322,10 @@ public class BleCotBridge {
                 if (payload.optString("tStart").isEmpty()) payload.put("tStart", iso8601(System.currentTimeMillis()));
                 String stable = env.toString();
                 requestPosition("marker:" + payload.getString("uid"), false,
-                        fix -> sendMarkerCot(stable, usePayloadLocation, fix, resolved),
+                        fix -> sendMarkerCot(stable, usePayloadLocation, fix, resolved, watchUid, relaySession),
                         () -> LogX.w(TAG, "Self marker deferred: no phone fix has ever been observed"));
             } else {
-                sendMarkerCot(envelopeJson, usePayloadLocation, null, resolved);
+                sendMarkerCot(envelopeJson, usePayloadLocation, null, resolved, watchUid, relaySession);
             }
         } catch (JSONException error) {
             LogX.e(TAG, "Invalid watch marker", error);
@@ -317,6 +334,11 @@ public class BleCotBridge {
 
     private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation, PhonePosition fix,
             Consumer<Map<String, Object>> resolved) {
+        sendMarkerCot(envelopeJson, usePayloadLocation, fix, resolved, null, null);
+    }
+
+    private void sendMarkerCot(String envelopeJson, boolean usePayloadLocation, PhonePosition fix,
+            Consumer<Map<String, Object>> resolved, String watchUid, String relaySession) {
         try {
             JSONObject env = new JSONObject(envelopeJson);
             JSONObject p = env.optJSONObject("payload");
@@ -447,14 +469,19 @@ public class BleCotBridge {
                 policy.watchImportStarted(markerUid, System.currentTimeMillis(),
                         p.optString("revision", ""), client.getReadySession());
             }
-            if (usePayloadLocation) {
+            boolean queued = dispatchCot("MARKER", xml);
+            if (usePayloadLocation && queued) {
                 synchronized (garminOriginMarkers) {
                     garminOriginMarkers.add(markerUid);
                     while (garminOriginMarkers.size() > 256)
                         garminOriginMarkers.remove(garminOriginMarkers.iterator().next());
                 }
+                if (watchUid != null && relaySession != null
+                        && relaySession.equals(p.optString("relaySession", ""))
+                        && watchUid.equals(p.optString("watchUid", watchUid))) {
+                    garminMarkerDeletes.record(markerUid, watchUid, type, lat, lon, hae, ce, le);
+                }
             }
-            dispatchCot("MARKER", xml);
             if (fix != null && resolved != null) {
                 Map<String, Object> entity = new HashMap<>();
                 entity.put("uid", markerUid);
@@ -826,10 +853,15 @@ public class BleCotBridge {
     }
 
     public boolean handleGarminMessage(JSONObject envelope) {
-        return handleGarminMessage(envelope, null);
+        return handleGarminMessage(envelope, null, null, null);
     }
 
     boolean handleGarminMessage(JSONObject envelope, Consumer<Map<String, Object>> resolvedMarker) {
+        return handleGarminMessage(envelope, resolvedMarker, null, null);
+    }
+
+    synchronized boolean handleGarminMessage(JSONObject envelope, Consumer<Map<String, Object>> resolvedMarker,
+                                              String watchUid, String relaySession) {
         if (envelope == null) return false;
         String msgType = envelope.optString("msgType", "").trim();
         JSONObject payload = envelope.optJSONObject("payload");
@@ -838,7 +870,7 @@ public class BleCotBridge {
             return false;
         }
         if (!java.util.Arrays.asList("relay_hello", "marker", "emergency", "pli",
-                "location_request", "chat").contains(msgType)) return false;
+                "location_request", "chat", "marker_delete").contains(msgType)) return false;
         if ("emergency".equals(msgType) && !"ALERT".equalsIgnoreCase(payload.optString("state"))
                 && !"CANCEL".equalsIgnoreCase(payload.optString("state"))) {
             LogX.w(TAG, "Garmin emergency rejected: invalid state");
@@ -853,6 +885,7 @@ public class BleCotBridge {
             }
             return true;
         }
+        GarminMarkerDelete.Owner deleteOwner = null;
         try {
             if ("marker".equals(msgType)) {
                 if (!"phone".equals(payload.optString("locationSource"))
@@ -866,6 +899,14 @@ public class BleCotBridge {
                         && Instant.parse(payload.getString("tStale")).toEpochMilli() <= System.currentTimeMillis())
                     throw new IllegalArgumentException("Stale Garmin marker");
             }
+            if ("marker_delete".equals(msgType)) {
+                if (!watchMessageIds.id(envelope).equals(payload.optString("messageId", "")))
+                    throw new IllegalArgumentException("Missing Garmin delete messageId");
+                deleteOwner = garminMarkerDeletes.authorize(payload, watchUid, relaySession,
+                        System.currentTimeMillis() / 1000L);
+                if (deleteOwner == null)
+                    throw new IllegalArgumentException("Garmin delete is not owned by this watch session");
+            }
             if ("chat".equals(msgType)) {
                 ChatReplyPayload reply = new ChatReplyPayload(payload);
                 GarminChatPolicy.reply(payload,
@@ -878,16 +919,51 @@ public class BleCotBridge {
         if (!watchMessageIds.first(envelope)) return true;
 
         String envelopeJson = envelope.toString();
+        boolean accepted = true;
         switch (msgType) {
             case "relay_hello":
                 LogX.i(TAG, "Garmin watch relay connected: "
                         + payload.optString("watchLabel", "Garmin watch"));
                 break;
             case "marker":
-                sendMarkerCot(envelopeJson, true, resolvedMarker);
+                sendMarkerCot(envelopeJson, true, resolvedMarker, watchUid, relaySession);
                 break;
             case "marker_delete":
-                LogX.w(TAG, "Garmin deletion rejected: no revision-gated paired point session");
+                String targetUid = payload.optString("uid", "");
+                try {
+                    final GarminMarkerDelete.Owner ownerForDelete = deleteOwner;
+                    MapItem target = mapView == null ? null : mapView.getMapItem(targetUid);
+                    if (target != null && !matchesGarminOwnedMarker(target, targetUid, ownerForDelete)) {
+                        LogX.w(TAG, "Garmin marker delete rejected: current map item no longer matches its owned point");
+                        accepted = false;
+                        watchMessageIds.forget(envelope);
+                        break;
+                    }
+                    String deletion = GarminMarkerDelete.deleteCot(targetUid, ownerForDelete,
+                            System.currentTimeMillis());
+                    accepted = dispatchCot("Garmin marker delete", deletion,
+                            () -> {
+                                boolean posted = new Handler(Looper.getMainLooper()).post(
+                                        () -> removeLocalGarminMarker(targetUid, ownerForDelete));
+                                if (!posted) LogX.w(TAG, "Unable to schedule local Garmin marker removal");
+                            });
+                    if (accepted) {
+                        garminMarkerDeletes.remove(targetUid, ownerForDelete);
+                        synchronized (garminOriginMarkers) {
+                            garminOriginMarkers.remove(targetUid);
+                        }
+                        synchronized (resolvedGarminMarkers) {
+                            resolvedGarminMarkers.remove(targetUid);
+                        }
+                        LogX.i(TAG, "Garmin marker delete handed to ATAK dispatch; remote delivery unconfirmed");
+                    } else {
+                        watchMessageIds.forget(envelope);
+                    }
+                } catch (IllegalArgumentException error) {
+                    LogX.w(TAG, "Garmin marker delete could not be constructed", error);
+                    accepted = false;
+                    watchMessageIds.forget(envelope);
+                }
                 break;
             case "emergency":
                 if (!payload.has("callsign")) {
@@ -923,7 +999,23 @@ public class BleCotBridge {
                 LogX.w(TAG, "Ignoring unsupported Garmin message: " + msgType);
                 break;
         }
-        return true;
+        return accepted;
+    }
+
+    private static boolean matchesGarminOwnedMarker(MapItem item, String uid,
+                                                     GarminMarkerDelete.Owner owner) {
+        if (!(item instanceof Marker) || owner == null || !uid.equals(item.getUID())
+                || !owner.type.equals(item.getType())) return false;
+        com.atakmap.coremap.maps.coords.GeoPoint point = ((Marker) item).getPoint();
+        return point != null && Math.abs(point.getLatitude() - owner.lat) < 0.000001d
+                && Math.abs(point.getLongitude() - owner.lon) < 0.000001d;
+    }
+
+    private void removeLocalGarminMarker(String uid, GarminMarkerDelete.Owner owner) {
+        MapItem current = mapView == null ? null : mapView.getMapItem(uid);
+        if (current != null && matchesGarminOwnedMarker(current, uid, owner)
+                && current.getGroup() != null)
+            current.getGroup().removeItem(current);
     }
 
     public List<Map<String, Object>> getGarminEntitySnapshot(int requestedLimit) {

@@ -23,15 +23,26 @@ public class GarminChatPolicyTest {
 
     @Test public void capabilitiesAreSessionBoundAndEnableRetryAcknowledgementsWithoutGroups() throws Exception {
         Map<String, Object> status = GarminChatPolicy.relayStatus(new JSONObject()
-                .put("relaySession", "current-watch-session").put("bloodhoundVersion", 1));
+                .put("relaySession", "current-watch-session").put("watchUid", "device-uid")
+                .put("bloodhoundVersion", 1));
         assertEquals("current-watch-session", status.get("relaySession"));
         assertEquals(false, status.get("chatGroups"));
         assertEquals(true, status.get("reliableDelivery"));
         assertEquals(true, status.get("phoneLocation"));
         assertEquals(1, status.get("selfStatus"));
-        assertEquals(7, status.size());
+        assertEquals(1, status.get("markerDelete"));
+        assertEquals(8, status.size());
         assertEquals(1, status.get("bloodhoundVersion"));
         assertEquals(true, status.get("bloodhoundControl"));
+    }
+
+    @Test public void markerDeleteCapabilityRequiresAValidWatchIdentity() throws Exception {
+        assertFalse(GarminChatPolicy.relayStatus(new JSONObject()
+                .put("relaySession", "watch")).containsKey("markerDelete"));
+        assertFalse(GarminChatPolicy.relayStatus(new JSONObject()
+                .put("relaySession", "watch").put("watchUid", "bad\nuid")).containsKey("markerDelete"));
+        assertEquals(1, GarminChatPolicy.relayStatus(new JSONObject()
+                .put("relaySession", "watch").put("watchUid", "device-uid")).get("markerDelete"));
     }
 
     @Test public void bloodhoundCapabilityRequiresVersionOneRequest() throws Exception {

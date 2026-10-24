@@ -32,6 +32,11 @@ final class WatchMessageIds {
         return !id.isEmpty() && received.contains(id);
     }
 
+    synchronized void forget(JSONObject envelope) {
+        String id = id(envelope);
+        if (!id.isEmpty()) received.remove(id);
+    }
+
     static Map<String, Object> result(JSONObject envelope, boolean accepted) {
         JSONObject payload = envelope.optJSONObject("payload");
         Map<String, Object> result = new HashMap<>();
