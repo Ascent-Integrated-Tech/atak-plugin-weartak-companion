@@ -362,6 +362,47 @@ brand, version, device description and OS helpers, respecting the host's
 `dispatchTAKVersionNumber` preference; unavailable attributes are omitted.
 Raw Gateway watch CoT is not rewritten.
 
+WATCH PPE / PHYSIO ON PHONE SELF PLI (SELF_STATUS v1)
+
+While a bonded watch is connected, it may contribute its saved PPE level and fresh,
+opted-in physiological samples to the phone's own PLI. The Companion advertises support with
+`relay_status.payload.selfStatus: 1` (Garmin) or `{"msg_type":"self_status_capability","version":1}`
+on WearOS BLE READY. The watch then sends full `self_status` snapshots: `{version:1, session,
+seq, deviceUid, model:"WEAROS"|"GARMIN"|"WATCHOS", ppe:null|{level, savedAt}, physio:null|{hr?,
+measuredAt, sktF?, sktFMeasuredAt, exert?, exertMeasuredAt}}`. `level` is exactly `None` or
+`MOPP 0`..`MOPP 4` (`None` is distinct from `MOPP 0`); drafts are never sent. `savedAt` is an ISO
+time, or `null` when a legacy save time is unknown (never invented). Each physio metric is optional
+but carries its own actual measurement time: `hr` bpm, `sktF` skin temperature in °F (59..113),
+`exert` fraction 0..1. At least one metric is required.
+
+Snapshots are bound to the current authorized transport generation:
+- WearOS: the BLE READY generation, locked to the first accepted session and `deviceUid`.
+- Garmin: `session` must equal the current `relaySession`, and `deviceUid` must equal
+  `relay_hello.watchUid`. A hello without `watchUid` fails closed.
+
+Delayed snapshots from an older generation, or a different session on the current one, are rejected.
+`seq` must increase within a session. Garmin snapshots are best-effort hints and are not acknowledged.
+
+The phone appends one managed line to ATAK's `userRemarks`, e.g.
+`MOPP2; HR: 72 bpm @ 18:15:30Z; Skin: 93.4F @ 18:15:00Z; Exert: 45% @ 18:15:30Z`.
+`None` is omitted from remarks. Fresh metrics are also merged into the self CoT as
+`<biometrics version='1'><device sampleTime='…'><model>…</model><uid>WATCH_UID</uid><hr sampleTime='…'>72</hr><skt sampleTime='…'>93.4</skt><exert sampleTime='…'>0.45</exert></device></biometrics>`.
+`skt` is in °F for model `WEAROS` and in °C otherwise, matching the physiology dashboard,
+which ignores a device without `hr`. When another provider already publishes `biometrics`,
+the watch device is merged into it; that provider's devices are preserved.
+
+Each metric is fresh only while its actual measurement time is no more than 120 s old (30 s future
+skew allowed); receipt time is never used. The managed line and biometrics are removed when:
+- the watch disconnects;
+- trust is lost;
+- the route or plugin stops;
+- 300 s pass without a snapshot.
+
+Only the exact line the Companion wrote is removed; user remarks and edited lines are never
+touched. Legacy watch PLI no longer adds a generated "WearTAK PLI" remark, and its remarks are the
+phone user's ATAK remarks. The legacy untimed `<physio hr>` is used only for older watches that
+have no active SELF_STATUS snapshot.
+
 Optional watch `team` / `role` strings in settings snapshots and identity-only
 `settings_changed` deltas are retained in the existing observed settings snapshot.
 Missing, blank, null or non-string fields do not invent values or erase a known

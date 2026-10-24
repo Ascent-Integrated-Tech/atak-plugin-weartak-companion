@@ -28,7 +28,8 @@ public class GarminChatPolicyTest {
         assertEquals(false, status.get("chatGroups"));
         assertEquals(true, status.get("reliableDelivery"));
         assertEquals(true, status.get("phoneLocation"));
-        assertEquals(6, status.size());
+        assertEquals(1, status.get("selfStatus"));
+        assertEquals(7, status.size());
         assertEquals(1, status.get("bloodhoundVersion"));
         assertEquals(true, status.get("bloodhoundControl"));
     }

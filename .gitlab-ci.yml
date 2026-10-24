@@ -21,7 +21,8 @@ field_report_regressions:
       javac -cp '.regression-libs/*' -d .regression-classes \
         "$main/PhoneFixValidator.java" "$main/PhonePosition.java" \
         "$main/PhonePositionActions.java" "$main/WatchMessageIds.java" \
-        "$main/LegacyPliCot.java" \
+        "$main/LegacyPliCot.java" "$main/WatchSelfStatus.java" \
+        "$main/SelfStatusRemarks.java" "$main/SelfPliAugmenter.java" \
         "$main/PhoneMarkerRelay.java" "$main/PhoneUserRelay.java" \
         "$main/PhoneRouteNavigationRelay.java" \
         "$main/RouteNavigationControl.java" "$main/RouteNavigationCot.java" \
@@ -33,7 +34,7 @@ field_report_regressions:
         "$main/AtakUnitPreferences.java" "$main/SettingsPayloadBuilder.java" "$main/TakServerItem.java" \
         "$tests/AtakUnitPreferencesTest.java" "$tests/SettingsPayloadBuilderTest.java" \
         "$tests/PhonePositionActionsTest.java" "$tests/WatchMessageIdsTest.java" \
-        "$tests/LegacyPliCotTest.java" \
+        "$tests/LegacyPliCotTest.java" "$tests/WatchSelfStatusTest.java" "$tests/SelfPliAugmenterTest.java" \
         "$tests/PhoneMarkerRelayTest.java" "$tests/PhoneUserLifetimeWarningsTest.java" \
         "$tests/PhoneRouteNavigationRelayTest.java" \
         "$tests/RouteNavigationControlTest.java" "$tests/RouteNavigationCotTest.java" \
@@ -47,6 +48,8 @@ field_report_regressions:
         com.weartak.atak.weartak_companion.plugin.PhonePositionActionsTest \
         com.weartak.atak.weartak_companion.plugin.WatchMessageIdsTest \
         com.weartak.atak.weartak_companion.plugin.LegacyPliCotTest \
+        com.weartak.atak.weartak_companion.plugin.WatchSelfStatusTest \
+        com.weartak.atak.weartak_companion.plugin.SelfPliAugmenterTest \
         com.weartak.atak.weartak_companion.plugin.PhoneMarkerRelayTest \
         com.weartak.atak.weartak_companion.plugin.PhoneRouteNavigationRelayTest \
         com.weartak.atak.weartak_companion.plugin.RouteNavigationControlTest \

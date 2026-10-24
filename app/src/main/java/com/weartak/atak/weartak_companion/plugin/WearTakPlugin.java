@@ -139,6 +139,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private final ConnectionModeController connectionModes = new ConnectionModeController(
             new ConnectionModeController.Transport() {
                 @Override public void stop() {
+                    if (selfPli != null) selfPli.clear("connection route stopped");
                     stopLocationDiagnostics("connection route stopped");
                     failManagementRelease("The route stopped before unlock was confirmed.");
                     ++scanSessionCount;
@@ -188,6 +189,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 }
             });
     private BleCotBridge bleCotBridge;
+    private SelfPliAugmenter selfPli;
     private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
@@ -605,6 +607,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         unitPreferencesObserver.start(atakUnitPreferences);
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
         bleCotBridge.setReceivedCotTiming(receivedCotTiming);
+        if (selfPli == null) {
+            AtakSelfPliHost selfPliHost = new AtakSelfPliHost(identityMap, mainHandler);
+            selfPli = new SelfPliAugmenter(selfPliHost, selfPliHost);
+        }
+        selfPli.start();
+        bleCotBridge.setSelfPliAugmenter(selfPli);
         SharedPreferences prefs = systemBondedPreferences();
         setupPurpose = prefs.getBoolean("setup_purpose", false);
         gatewayPurpose = "gateway".equals(prefs.getString("purpose", ""));
@@ -662,6 +670,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!connected) failManagementRelease("Watch disconnected before acknowledgement.");
                     if (!connected) stopLocationDiagnostics("watch disconnected");
+                    if (!connected && selfPli != null) selfPli.clear("watch disconnected");
                     if (!connected && bleCotBridge != null) bleCotBridge.discardPendingCot();
                     if (!connected && phoneUserRelay != null) phoneUserRelay.disconnected();
                     if (systemBondedConnection != null)
@@ -745,6 +754,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     if (!bleClient.isConnected()) return;
                     phoneSettingsPushedThisConnection = false;
                     settingsModeLoadedThisConnection = false;
+                    if (selfPli != null && !gatewayPurpose)
+                        selfPli.bind("wearos:" + bleClient.getReadySession(), null, null);
+                    sendSelfStatusCapability();
                     if (!setupPurpose && phoneManagedSettingsRequested) {
                         startPhoneSettingsHandshake();
                     } else {
@@ -782,6 +794,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             || "settings_changed".equals(diagnosticType)) {
                         refreshIdentityStatus();
                         refreshDeviceListUi();
+                    }
+                    if (WatchSelfStatus.MESSAGE.equals(diagnosticType)) {
+                        if (selfPli != null) selfPli.accept("wearos:" + incomingSession,
+                                pointEnvelope.optJSONObject("payload"));
+                        return;
                     }
                     if (LocationDiagnosticsProtocol.HELLO.equals(diagnosticType) ||
                             LocationDiagnosticsProtocol.STOP.equals(diagnosticType) ||
@@ -903,6 +920,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     stopLocationDiagnostics("watch bond lost");
+                    if (selfPli != null) selfPli.clear("watch bond lost");
                     clearPreferredDevice(deviceAddress);
                     clearSessionSettings();
                     updateSystemBondedControl();
@@ -1547,6 +1565,19 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
     }
 
+    private void sendSelfStatusCapability() {
+        WearTakBleClient client = bleClient;
+        if (client == null || gatewayPurpose) return;
+        try {
+            String capability = new JSONObject().put("msg_type", WatchSelfStatus.CAPABILITY)
+                    .put("version", WatchSelfStatus.VERSION).toString();
+            if (!client.writeJsonLineToWatch(capability, client.getReadySession()))
+                LogX.w(TAG, "Unable to advertise watch self_status support");
+        } catch (org.json.JSONException e) {
+            LogX.w(TAG, "Unable to build self_status capability", e);
+        }
+    }
+
     private void runOnMain(Runnable action) {
         if (Looper.myLooper() == mainHandler.getLooper()) action.run();
         else mainHandler.post(action);
@@ -1567,6 +1598,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             simulatorDiagnostics.stop();
             configureWatchChatEchoSuppression(false);
             connectionModes.stop();
+            if (selfPli != null) selfPli.clear("plugin stopped");
             if (diagnosticLogger != null) {
                 LogX.detach(diagnosticLogger);
                 diagnosticLogger.shutdown();
@@ -1704,6 +1736,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                                     if (!connected && bloodhoundBridge != null) {
                                         bloodhoundBridge.disconnected();
                                     }
+                                    if (!connected && selfPli != null)
+                                        selfPli.clear("Garmin watch disconnected");
                                     renderGarminConnection(connected);
                                     if (garminEntities != null) garminEntities.refreshLinks();
                                     if (garminRoutes != null) garminRoutes.refreshLinks();
@@ -2093,6 +2127,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                             bloodhoundBridge.disconnected();
                     }
                     if (link != null && link.isCurrent()) {
+                        String watchUid = hello.optString("watchUid", "");
+                        if (selfPli != null && !gatewayPurpose && !watchUid.isEmpty()
+                                && link.relaySession().equals(hello.optString("relaySession")))
+                            selfPli.bind("garmin:" + link.relaySession(), link.relaySession(), watchUid);
                         if (link.send("relay_status", status)) {
                             if (status.containsKey("unitPrefs")) {
                                 garminUnitLink = link;
@@ -2106,6 +2144,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     LogX.w(TAG, "Garmin capabilities not negotiated: " + e.getMessage());
                 }
             }
+        }
+        if (WatchSelfStatus.MESSAGE.equals(msgType)) {
+            if (selfPli != null && link != null && link.isCurrent())
+                selfPli.accept("garmin:" + link.relaySession(), envelope.optJSONObject("payload"));
+            return;
         }
         if (bleCotBridge != null) {
             String relaySession = link == null ? "" : link.relaySession();

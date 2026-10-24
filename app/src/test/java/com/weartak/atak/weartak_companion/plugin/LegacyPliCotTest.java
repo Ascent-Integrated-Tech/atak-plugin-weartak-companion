@@ -58,8 +58,8 @@ public class LegacyPliCotTest {
         String special = "A&<'\" >";
         LegacyPliCot.Metadata metadata = new LegacyPliCot.Metadata(
                 special, special, special, special, special, special);
-        String xml = LegacyPliCot.build(new JSONObject().put("remarks", special),
-                special, special, 1, 2, 3, 4, 5, metadata, NOW);
+        String xml = LegacyPliCot.build(new JSONObject(),
+                special, special, 1, 2, 3, 4, 5, metadata, NOW, special, WatchSelfStatus.Contribution.NONE);
         Document event = parse(xml);
         assertEquals(special, event.getDocumentElement().getAttribute("uid"));
         assertEquals(special, first(event, "contact").getAttribute("callsign"));
@@ -84,11 +84,36 @@ public class LegacyPliCotTest {
         assertEquals("42.5", first(event, "track").getAttribute("course"));
         assertEquals("3", first(event, "track").getAttribute("speed"));
         assertEquals("87", first(event, "status").getAttribute("battery"));
-        assertEquals("95", first(event, "physio").getAttribute("hr"));
+        assertEquals("legacy watches keep their existing heart rate", "95",
+                first(event, "physio").getAttribute("hr"));
+        assertEquals(0, event.getElementsByTagName("biometrics").getLength());
         payload.put("battery_percent", 200).put("hr", -1);
         event = parse(build(payload, phone));
         assertEquals("100", first(event, "status").getAttribute("battery"));
         assertEquals(0, event.getElementsByTagName("physio").getLength());
+    }
+
+    @Test public void noGeneratedBoilerplateAndPhoneRemarksAndFreshWatchBiometricsAreUsed() throws Exception {
+        JSONObject watchPayload = new JSONObject().put("remarks", "WATCH TEXT").put("hr", 99);
+        Document plain = parse(build(watchPayload, phone));
+        assertEquals(0, plain.getElementsByTagName("remarks").getLength());
+        assertFalse(build(watchPayload, phone).contains("WearTAK PLI"));
+
+        WatchSelfStatus state = new WatchSelfStatus();
+        state.accept("link", WatchSelfStatusTest.snapshot("s1", 0, "MOPP 2", 72, NOW), NOW);
+        Document event = parse(LegacyPliCot.build(watchPayload, "PHONE-UID", "PHONE-CS",
+                38.1, -77.1, 1, 10, 20, phone, NOW, " user\nMOPP2; HR: 72 bpm @ 20:00:00Z ",
+                state.current(NOW)));
+        assertEquals("SELF_STATUS replaces the untimed legacy rate", 0,
+                event.getElementsByTagName("physio").getLength());
+        assertEquals("PHONE-UID", event.getDocumentElement().getAttribute("uid"));
+        assertEquals("user\nMOPP2; HR: 72 bpm @ 20:00:00Z", first(event, "remarks").getTextContent());
+        Element biometrics = first(event, "biometrics");
+        assertEquals("1", biometrics.getAttribute("version"));
+        assertEquals("WATCH-UID", first(event, "uid").getTextContent());
+        assertEquals("72", first(event, "hr").getTextContent());
+        assertEquals("WEAROS", first(event, "model").getTextContent());
+        assertEquals(1, event.getElementsByTagName("remarks").getLength());
     }
 
     @Test public void absentRuntimeValuesAreOmittedAndHostPrivacyCanOmitTakv() throws Exception {
