@@ -30,6 +30,8 @@ field_report_regressions:
         "$main/SourceCotTiming.java" \
         "$main/GarminEntityAdapter.java" "$main/GarminEntityForwarder.java" \
         "$main/ConnectionModeController.java" \
+        "$main/AtakUnitPreferences.java" "$main/SettingsPayloadBuilder.java" "$main/TakServerItem.java" \
+        "$tests/AtakUnitPreferencesTest.java" "$tests/SettingsPayloadBuilderTest.java" \
         "$tests/PhonePositionActionsTest.java" "$tests/WatchMessageIdsTest.java" \
         "$tests/LegacyPliCotTest.java" \
         "$tests/PhoneMarkerRelayTest.java" "$tests/PhoneUserLifetimeWarningsTest.java" \
@@ -40,6 +42,8 @@ field_report_regressions:
         "$tests/SourceCotTimingTest.java" \
         "$tests/GarminEntityAdapterTest.java" "$tests/GarminEntityForwarderTest.java"
       java -cp '.regression-classes:.regression-libs/*' org.junit.runner.JUnitCore \
+        com.weartak.atak.weartak_companion.plugin.AtakUnitPreferencesTest \
+        com.weartak.atak.weartak_companion.plugin.SettingsPayloadBuilderTest \
         com.weartak.atak.weartak_companion.plugin.PhonePositionActionsTest \
         com.weartak.atak.weartak_companion.plugin.WatchMessageIdsTest \
         com.weartak.atak.weartak_companion.plugin.LegacyPliCotTest \

@@ -30,6 +30,12 @@ final class SettingsPayloadBuilder {
 
     static JSONObject build(List<TakServerItem> servers, Integer interval, String callsign,
                             String team, String role, boolean managed) throws JSONException {
+        return build(servers, interval, callsign, team, role, managed, null);
+    }
+
+    static JSONObject build(List<TakServerItem> servers, Integer interval, String callsign,
+                            String team, String role, boolean managed,
+                            java.util.Map<String, String> units) throws JSONException {
         if (interval != null && interval <= 0) {
             throw new IllegalArgumentException("Reporting interval must be positive.");
         }
@@ -56,6 +62,7 @@ final class SettingsPayloadBuilder {
             payload.put("role", role);
         }
         payload.put("phoneManagedSettings", managed);
+        if (units != null) payload.put("unitPrefs", new JSONObject(units));
         JSONObject envelope = new JSONObject();
         envelope.put("msg_type", "set_settings");
         envelope.put("payload", payload);

@@ -71,6 +71,42 @@ The MR-only `field_report_regressions` job runs these transport-independent JUni
 regressions without signing an APK. The existing protected-`develop` signed
 release pipeline remains unchanged.
 
+### ATAK display units
+
+Change units in **ATAK Settings > Display Preferences > Unit Display Format**.
+Range Units selects Feet/Miles, Meters/Kilometers or Nautical Miles. The feet-to-miles
+and meters-to-kilometers thresholds, speed, altitude, bearing units and north
+reference remain independent ATAK choices. The current WearOS display offers one
+Metric/Imperial toggle: it consumes the range preference (`1` metric; `0` or `2`
+imperial), uses 5280 feet for the miles transition, and ignores the other six
+preferences. Nautical range therefore displays as imperial on that watch build;
+transmitting the remaining keys does not claim watch-side support for them.
+
+Companion sends all seven preferences with the existing WearOS settings upload
+in setup and phone-managed modes. It also observes ATAK's host SharedPreferences
+and sends units-only updates to the ready bonded single watch, including after
+reconnect. Gateway sessions do not receive units. Display choices do not change
+CoT coordinates, reporting intervals, server configuration or management ownership.
+The watch may change its own units; the next phone update wins, and disconnect
+does not restore previous units.
+
+The additive `set_settings.payload.unitPrefs` object and live `unit_prefs.payload`
+use ATAK's seven preference keys verbatim with string values: `rab_rng_units_pref`
+(`0` English, `1` metric, `2` nautical), `rng_feet_display_pref` (default `5280`),
+`rng_meters_display_pref` (`2000`), `speed_unit_pref` (`0` mph, `1` km/h, `2` knots,
+`3` m/s), `alt_unit_pref` (`0` feet, `1` meters), `rab_brg_units_pref` (`0` degrees,
+`1` mils) and `rab_north_ref_pref` (`0` true, `1` magnetic, `2` grid).
+Missing ATAK preferences use ATAK 5.6 defaults: metric range, mph, feet altitude,
+degrees and magnetic north. Invalid values are reported instead of silently
+substituting another unit; thresholds must be between 1 and 1000000.
+Older WearOS builds ignore the unknown field/message safely.
+
+Garmin uses the existing `relay_status` configuration path only when the exclusive
+current watch advertises numeric `relay_hello.payload.unitPrefsVersion: 1`.
+The status adds `unitPrefsVersion: 1` and the same `unitPrefs` dictionary, retaining
+all negotiated capabilities and its relay session on live updates. Older Garmin
+builds receive no new unit fields; their profile-settings transactions are unchanged.
+
 ### Companion diagnostic logging (WEARTAK-274)
 
 Use **Log** in the Companion header before reproducing a problem, then **Send**

@@ -87,6 +87,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         mainHandler.removeCallbacks(liveIdentityUpdate);
         mainHandler.post(liveIdentityUpdate);
     });
+    private SharedPreferences atakUnitPreferences;
+    private Map<String, String> lastSentUnits;
+    private GarminEntityForwarder.Link garminUnitLink;
+    private Map<String, Object> garminUnitStatus;
+    private final Runnable liveUnitUpdate = this::syncLiveAtakUnits;
+    private final AtakUnitPreferencesObserver unitPreferencesObserver =
+            new AtakUnitPreferencesObserver(() -> {
+                mainHandler.removeCallbacks(liveUnitUpdate);
+                mainHandler.post(liveUnitUpdate);
+            });
 
     private WearTakBleClient bleClient;
     private SystemBondedWatchConnection systemBondedConnection;
@@ -591,6 +601,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         receivedCotTiming.start(identityMap);
         phoneIdentityObserver.start(AtakPreferences.getInstance(identityMap.getContext()).getSharedPrefs(),
                 identityMap.getSelfMarker());
+        atakUnitPreferences = AtakPreferences.getInstance(identityMap.getContext()).getSharedPrefs();
+        unitPreferencesObserver.start(atakUnitPreferences);
         if (bleCotBridge == null) bleCotBridge = new BleCotBridge();
         bleCotBridge.setReceivedCotTiming(receivedCotTiming);
         SharedPreferences prefs = systemBondedPreferences();
@@ -756,6 +768,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     JSONObject pointEnvelope = new JSONObject(jsonLine);
                     String diagnosticType = pointEnvelope.optString("msgType",
                             pointEnvelope.optString("msg_type", ""));
+                    if ("unit_prefs_ack".equals(diagnosticType)) {
+                        JSONObject result = pointEnvelope.optJSONObject("payload");
+                        if (result == null || !Boolean.TRUE.equals(result.opt("ok"))) {
+                            lastSentUnits = null;
+                            unitSyncError("Watch could not apply ATAK units: "
+                                    + (result == null ? "missing result" : result.optString("error")));
+                        }
+                        return;
+                    }
                     if ("watch_info".equals(diagnosticType)
                             || "settings_request".equals(diagnosticType)
                             || "settings_changed".equals(diagnosticType)) {
@@ -1265,6 +1286,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             if (settingsStatusTV != null) settingsStatusTV.setText("Phone management confirmed on watch.");
             phoneSettingsRetryJson = null;
             mainHandler.post(liveIdentityUpdate);
+            mainHandler.post(liveUnitUpdate);
         }
         setConnectionStatus("CONNECTED");
         updateSystemBondedControl();
@@ -1537,6 +1559,11 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             receivedCotTiming.stop();
             phoneIdentityObserver.stop();
             mainHandler.removeCallbacks(liveIdentityUpdate);
+            unitPreferencesObserver.stop();
+            atakUnitPreferences = null;
+            mainHandler.removeCallbacks(liveUnitUpdate);
+            garminUnitLink = null;
+            garminUnitStatus = null;
             simulatorDiagnostics.stop();
             configureWatchChatEchoSuppression(false);
             connectionModes.stop();
@@ -2046,6 +2073,17 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 try {
                     Map<String, Object> status = GarminChatPolicy.relayStatus(
                             hello, isCurrentGarminBloodhoundLink(link));
+                    garminUnitLink = null;
+                    garminUnitStatus = null;
+                    if (!gatewayPurpose && !setupPurpose && !managementRelease.isPending()
+                            && isCurrentGarminBloodhoundLink(link)
+                            && AtakUnitPreferences.garminSupported(hello)) {
+                        try {
+                            status = AtakUnitPreferences.garminStatus(status, readAtakUnits());
+                        } catch (IllegalArgumentException | IllegalStateException error) {
+                            unitSyncError("Cannot sync ATAK units: " + error.getMessage());
+                        }
+                    }
                     boolean bloodhoundSupported =
                             Boolean.TRUE.equals(status.get("bloodhoundControl"));
                     if (bloodhoundBridge != null) {
@@ -2054,7 +2092,16 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                         else
                             bloodhoundBridge.disconnected();
                     }
-                    if (link != null && link.isCurrent()) link.send("relay_status", status);
+                    if (link != null && link.isCurrent()) {
+                        if (link.send("relay_status", status)) {
+                            if (status.containsKey("unitPrefs")) {
+                                garminUnitLink = link;
+                                garminUnitStatus = status;
+                            }
+                        } else {
+                            LogX.w(TAG, "Unable to send Garmin relay configuration");
+                        }
+                    }
                 } catch (IllegalArgumentException e) {
                     LogX.w(TAG, "Garmin capabilities not negotiated: " + e.getMessage());
                 }
@@ -2707,7 +2754,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         commitFieldsToSelectedItem();
 
         JSONObject root;
+        Map<String, String> units;
         try {
+            units = gatewayPurpose ? null : readAtakUnits();
             Integer reportInt = tryParseInt(getText(reportIntervalET));
             if (!getText(reportIntervalET).isEmpty() && reportInt == null) {
                 throw new IllegalArgumentException("Reporting interval must be a positive number.");
@@ -2717,9 +2766,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
             String cs = phoneManagedSettingsRequested ? getPhoneCallsign() : getText(watchCallsignET);
             root = SettingsPayloadBuilder.build(currentServerList, reportInt, cs,
-                    getPhoneTeam(), getPhoneRole(), phoneManagedSettingsRequested);
+                    getPhoneTeam(), getPhoneRole(), phoneManagedSettingsRequested, units);
             desiredWatchCallsign = cs;
-        } catch (IllegalArgumentException error) {
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            LogX.e(TAG, "Cannot build watch settings", error);
             if (settingsStatusTV != null) settingsStatusTV.setText(error.getMessage());
             return false;
         } catch (JSONException error) {
@@ -2732,6 +2782,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (phoneSettingsHandshake.isPending()) phoneSettingsRetryJson = jsonLine;
         lastSettingsApplyResult = null;
         boolean ok = bleClient.writeJsonLineToWatch(jsonLine);
+        if (ok) lastSentUnits = units;
         if (ok && phoneManagedSettingsRequested) {
             JSONObject sent = root.optJSONObject("payload");
             lastSentPhoneIdentity = java.util.Arrays.asList(sent.optString("callsign"),
@@ -2741,6 +2792,51 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             settingsStatusTV.setText(ok ? "Sending settings to watch..." : "Failed to send (not connected).");
         }
         return ok;
+    }
+
+    private Map<String, String> readAtakUnits() {
+        if (atakUnitPreferences == null) {
+            throw new IllegalStateException("ATAK unit preferences are not available.");
+        }
+        return AtakUnitPreferences.read(atakUnitPreferences.getAll());
+    }
+
+    private void unitSyncError(String message) {
+        LogX.e(TAG, message);
+        if (settingsStatusTV != null) settingsStatusTV.setText(message);
+    }
+
+    private void syncLiveAtakUnits() {
+        if (!identityObserverActive || gatewayPurpose || managementRelease.isPending()) return;
+        try {
+            Map<String, String> units = readAtakUnits();
+            if (connectionModes.getMode() == ConnectionModeController.Mode.GARMIN) {
+                GarminEntityForwarder.Link link = garminUnitLink;
+                if (link == null || garminUnitStatus == null
+                        || !isCurrentGarminBloodhoundLink(link)
+                        || !link.relaySession().equals(garminUnitStatus.get("relaySession"))
+                        || units.equals(garminUnitStatus.get("unitPrefs"))) return;
+                Map<String, Object> status = AtakUnitPreferences.garminStatus(garminUnitStatus, units);
+                if (link.sendForSession("relay_status", status, link.relaySession())) {
+                    garminUnitStatus = status;
+                } else {
+                    unitSyncError("Could not send updated ATAK units to Garmin watch.");
+                }
+                return;
+            }
+            WearTakBleClient owner = bleClient;
+            long session = owner == null ? -1 : owner.getReadySession();
+            if (session < 0 || !settingsSession.canSend() || phoneSettingsHandshake.isPending()
+                    || phoneSettingsHandshake.isFailed() || units.equals(lastSentUnits)) return;
+            if (owner.writeJsonLineToWatch(AtakUnitPreferences.command(units).toString(), session)) {
+                lastSentUnits = units;
+            } else {
+                unitSyncError("Could not send updated ATAK units to watch.");
+            }
+        } catch (JSONException | IllegalArgumentException | IllegalStateException error) {
+            LogX.e(TAG, "Cannot sync ATAK unit preferences", error);
+            unitSyncError("Cannot sync ATAK units: " + error.getMessage());
+        }
     }
 
     private void syncLivePhoneIdentity() {
@@ -3255,6 +3351,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void clearSessionSettings() {
         lastSentPhoneIdentity = null;
+        lastSentUnits = null;
+        garminUnitLink = null;
+        garminUnitStatus = null;
         cancelPhoneSettingsHandshake();
         settingsSession.clear();
         garminSettingsTransaction.cancel();
@@ -3348,6 +3447,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         }
         updateSettingsSendState();
         mainHandler.post(liveIdentityUpdate);
+        mainHandler.post(liveUnitUpdate);
     }
 
     private void savePreferredDevice(String address, String nameOrNull) {
