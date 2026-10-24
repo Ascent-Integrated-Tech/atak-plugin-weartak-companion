@@ -42,6 +42,7 @@ public final class GarminConnectIqClient {
         boolean appInfoPending;
         volatile boolean connected;
         volatile int routeVersion;
+        volatile int routeNavigationVersion;
         GarminEntityForwarder.Link entityLink;
         volatile String relaySession = "";
         volatile int entitySyncVersion = 1;
@@ -393,6 +394,9 @@ public final class GarminConnectIqClient {
                         @Override public int routeVersion() {
                             return isCurrent() ? entry.routeVersion : 0;
                         }
+                        @Override public int routeNavigationVersion() {
+                            return isCurrent() ? entry.routeNavigationVersion : 0;
+                        }
                         @Override public boolean send(String type, Map<String, Object> payload) {
                             synchronized (GarminConnectIqClient.this) {
                                 if (!isCurrent()) return false;
@@ -491,6 +495,7 @@ public final class GarminConnectIqClient {
                         entry.linkGeneration++;
                         entry.entityLink = null;
                         entry.routeVersion = 0;
+                        entry.routeNavigationVersion = 0;
                         if (entry.appEventsRegistered && entry.app != null) {
                             try {
                                 connectIQ.unregisterForApplicationEvents(entry.device, entry.app);
@@ -613,6 +618,10 @@ public final class GarminConnectIqClient {
                                             entry.relaySession = hello == null ? "" : hello.optString("relaySession", "");
                                             entry.entitySyncVersion = hello == null ? 1 : hello.optInt("entitySyncVersion", 1);
                                             entry.watchUid = hello == null ? "" : hello.optString("watchUid", "");
+                                            Object navigationVersion = hello == null ? null
+                                                    : hello.opt("routeNavigationVersion");
+                                            entry.routeNavigationVersion = navigationVersion instanceof Number
+                                                    && ((Number) navigationVersion).doubleValue() == 1.0d ? 1 : 0;
                                         }
                                         entityLinks();
                                         listener.onMessageReceived(envelope, entry.entityLink);

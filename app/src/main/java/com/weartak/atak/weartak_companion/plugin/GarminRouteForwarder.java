@@ -81,6 +81,37 @@ final class GarminRouteForwarder {
         }
     }
 
+    synchronized GarminRouteProtocol.Route navigationRoute(GarminEntityForwarder.Link link,
+            String uid, String expectedServer, String cot) {
+        if (!active() || link == null || !link.isCurrent()
+                || link.routeVersion() != GarminRouteProtocol.VERSION) {
+            throw new IllegalArgumentException("Garmin route link is not ready");
+        }
+        refreshLinks();
+        Map<String, GarminRouteProtocol.Route> cache = published.get(link);
+        if (cache != null) {
+            for (GarminRouteProtocol.Route route : cache.values()) {
+                if (!uid.equals(route.uid) || expectedServer != null
+                        && !expectedServer.equals(route.serverId)) continue;
+                if (cot != null) {
+                    Map<String, String> metadata = new HashMap<>();
+                    metadata.put("serverId", route.serverId);
+                    GarminRouteProtocol.Route exported = GarminRouteProtocol.fromCotXml(cot, metadata, uid);
+                    if (route.points.size() != exported.points.size()) break;
+                    boolean same = true;
+                    for (int i = 0; i < route.points.size(); i++) {
+                        GarminRouteProtocol.Point a = route.points.get(i), b = exported.points.get(i);
+                        if (Math.abs(a.lat - b.lat) > 0.000001
+                                || Math.abs(a.lon - b.lon) > 0.000001) same = false;
+                    }
+                    if (!same) break;
+                }
+                return route;
+            }
+        }
+        throw new IllegalArgumentException("Route unavailable, changed or exceeds Garmin capacity");
+    }
+
     private boolean reset(GarminEntityForwarder.Link link) {
         capacityReported.remove(link);
         if (!link.send("routes_reset", GarminRouteProtocol.reset())) {

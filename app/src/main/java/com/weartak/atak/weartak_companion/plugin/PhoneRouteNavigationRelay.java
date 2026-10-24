@@ -25,17 +25,27 @@ final class PhoneRouteNavigationRelay {
     private boolean completed;
 
     void start(String uid) {
+        start(uid, UUID.randomUUID().toString());
+    }
+
+    void start(String uid, String id) {
         if (uid == null || uid.trim().isEmpty() || uid.length() > 256) {
             throw new IllegalArgumentException("Invalid navigation route UID");
         }
         routeUid = uid;
-        navigationSession = UUID.randomUUID().toString();
+        if (!RouteNavigationControl.validUuid(id)) {
+            throw new IllegalArgumentException("Invalid navigation session");
+        }
+        navigationSession = id;
         sequence = 0;
         sentConnection = -1;
         sentFingerprint = null;
         stopping = false;
         completed = false;
     }
+
+    String sessionId() { return navigationSession; }
+    String routeUid() { return routeUid; }
 
     boolean update(String uid, int target, int pointCount, String cot, String fingerprint,
                    long connection, Writer writer) throws JSONException {

@@ -8,6 +8,19 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class GarminChatPolicyTest {
+    @Test public void routeNavigationCapabilityRequiresExactVersionRouteSupportAndExclusiveLink() throws Exception {
+        JSONObject hello = new JSONObject().put("relaySession", "watch")
+                .put("routeVersion", 1).put("routeNavigationVersion", 1);
+        assertEquals(1, GarminChatPolicy.relayStatus(hello).get("routeNavigationVersion"));
+        assertFalse(GarminChatPolicy.relayStatus(hello, false).containsKey("routeNavigationVersion"));
+        for (Object version : new Object[]{"1", 2, 1.5, true}) {
+            assertFalse(GarminChatPolicy.relayStatus(new JSONObject(hello.toString())
+                    .put("routeNavigationVersion", version)).containsKey("routeNavigationVersion"));
+        }
+        assertFalse(GarminChatPolicy.relayStatus(new JSONObject(hello.toString())
+                .put("routeVersion", 0)).containsKey("routeNavigationVersion"));
+    }
+
     @Test public void capabilitiesAreSessionBoundAndEnableRetryAcknowledgementsWithoutGroups() throws Exception {
         Map<String, Object> status = GarminChatPolicy.relayStatus(new JSONObject()
                 .put("relaySession", "current-watch-session").put("bloodhoundVersion", 1));

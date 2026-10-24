@@ -320,6 +320,42 @@ public class GarminRouteForwarderTest {
         return GarminRouteProtocol.route(server, uid, uid, null, null, points);
     }
 
+    @Test public void navigationOnlyUsesPublishedMatchingServerAndFullGeometry() {
+        Source source = new Source();
+        source.routes.add(route("s", "r", 2));
+        FakeLink link = new FakeLink(1);
+        GarminRouteForwarder forwarder = forwarder(source, link);
+        forwarder.start();
+        String cot = "<event uid='r' type='b-m-r'><detail>"
+                + "<link point='0,0'/><link point='1,1'/></detail></event>";
+        assertEquals("s", forwarder.navigationRoute(link, "r", "s", cot).serverId);
+        assertThrows(IllegalArgumentException.class, () ->
+                forwarder.navigationRoute(link, "r", "wrong", cot));
+        assertThrows(IllegalArgumentException.class, () ->
+                forwarder.navigationRoute(link, "r", "s", cot.replace("1,1", "2,2")));
+        link.current = false;
+        assertThrows(IllegalArgumentException.class, () ->
+                forwarder.navigationRoute(link, "r", "s", cot));
+    }
+
+    @Test public void navigationCannotBypassCapacityOrFailedRouteDelivery() {
+        Source source = new Source();
+        for (int i = 0; i < 9; i++) source.routes.add(route("s", "r" + i, 16));
+        FakeLink link = new FakeLink(1);
+        GarminRouteForwarder forwarder = forwarder(source, link);
+        forwarder.start();
+        assertThrows(IllegalArgumentException.class, () ->
+                forwarder.navigationRoute(link, "r8", "s", null));
+        Source empty = new Source();
+        empty.routes.add(route("s", "r", 2));
+        FakeLink rejected = new FakeLink(1);
+        rejected.rejectedTypes.add("route");
+        GarminRouteForwarder failed = forwarder(empty, rejected);
+        failed.start();
+        assertThrows(IllegalArgumentException.class, () ->
+                failed.navigationRoute(rejected, "r", "s", null));
+    }
+
     private static final class Source implements GarminRouteForwarder.Source {
         List<GarminRouteProtocol.Route> routes = new ArrayList<>();
         Consumer<GarminRouteProtocol.Route> changed;

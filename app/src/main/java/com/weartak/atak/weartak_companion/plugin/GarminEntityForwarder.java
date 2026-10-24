@@ -24,6 +24,7 @@ final class GarminEntityForwarder {
         boolean isCurrent();
         boolean send(String type, Map<String, Object> payload);
         default int routeVersion() { return 0; }
+        default int routeNavigationVersion() { return 0; }
         default int entitySyncVersion() { return 1; }
         default String relaySession() { return ""; }
         default String watchUid() { return ""; }
