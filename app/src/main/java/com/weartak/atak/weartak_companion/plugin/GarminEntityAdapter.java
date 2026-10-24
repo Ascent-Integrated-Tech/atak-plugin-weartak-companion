@@ -31,7 +31,9 @@ final class GarminEntityAdapter {
         Map<String, Object> entity = new HashMap<>();
         entity.put("uid", uid);
         entity.put("type", type);
-        if (type.startsWith("b-m-p")) entity.put("isPoint", true);
+        if (type.startsWith("b-m-p") || VIDEO_TYPE.equals(type)) entity.put("isPoint", true);
+        // Presence-only camera classification; stream URLs and attributes never leave the phone.
+        if (Boolean.TRUE.equals(metadata.get("__video"))) entity.put("__video", new HashMap<String, Object>());
         if (deletion) entity.put("isDelete", true);
         if (!alert && groundUserType(type) && Boolean.TRUE.equals(metadata.get("isUser"))) {
             entity.put("isUser", true);
@@ -72,9 +74,11 @@ final class GarminEntityAdapter {
 
     static boolean supportedType(String type) {
         return type != null && (type.startsWith("a-") || type.startsWith("b-a-o")
-                || "b-a-g".equals(type) || type.startsWith("b-m-p")
+                || "b-a-g".equals(type) || type.startsWith("b-m-p") || VIDEO_TYPE.equals(type)
                 || type.startsWith("u-d") || "t-x-d-d".equals(type));
     }
+
+    static final String VIDEO_TYPE = "b-i-v";
 
     static boolean groundUserType(String type) {
         return type != null && type.matches("a-[^-]+-G(?:-.*)?");

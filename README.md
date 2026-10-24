@@ -65,7 +65,10 @@ accepted the action, not remote teammate delivery; the cache is not a persistent
 exactly-once guarantee across process death. Legacy WearOS envelopes without IDs
 remain supported. Generic Garmin entities include all `a-*` affiliations,
 `b-m-p*` spots and `u-d*` shapes, source stale time, nested `link.uid/relation`,
-radius and `shape.ellipse.major/minor`. Coordinate-free `t-x-d-d` deletion events
+radius and `shape.ellipse.major/minor`. ATAK video-alias markers (`b-i-v`) relay as
+points, and any relayed entity whose CoT has a `<__video>` detail carries a
+presence-only `__video: {}` camera classification; stream URLs and other video
+attributes are never sent to Garmin. Coordinate-free `t-x-d-d` deletion events
 are relayed; map removals delete only entities previously published by the phone.
 The MR-only `field_report_regressions` job runs these transport-independent JUnit
 regressions without signing an APK. The existing protected-`develop` signed
