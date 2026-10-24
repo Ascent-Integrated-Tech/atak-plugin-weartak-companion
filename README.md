@@ -1040,6 +1040,75 @@ Behavior on the requested ATAK 5.8 phone is not established by this 5.6 target
 or by local compilation/unit tests.
 TPP must provide its normal TAK SDK/build credentials; no local SDK,
 local.properties, generated outputs, or signing key is included.
+### Phone-owned route navigation over bonded WearOS BLE
+
+Starting native ATAK route navigation in Traditional or Samsung Wearable mode
+starts the same route on the bonded watch. This is separate from Bloodhound:
+the phone remains the authority for waypoint advancement. Objective changes
+(including manual next/previous), geometry and route-detail edits are forwarded.
+The observer also reconciles every 1.5 seconds to recover replaced navigation
+managers, reconnects and rejected writes. Setup and Gateway modes do not enable
+this single-watch BLE relay.
+
+Newline-delimited JSON uses `msg_type=phone_route_navigation` with payload
+`version: 1`, UUID `sessionId`, increasing `sequence`, `action` (`start`,
+`progress`, `stop`) and `routeUid`. Every start/progress includes complete
+`routeCot` (`b-m-r` with matching UID) and zero-based `targetPointIndex` into
+the raw CoT link vertices. Geometry and objective are applied atomically:
+invalid vertices/counts are rejected, never filtered or renumbered. Bounds are
+10,000 vertices and 60 KiB per UTF-8 JSON frame after escaping. Errors are logged;
+no truncation or simplified replacement route is sent. Duplicate unchanged
+snapshots are suppressed. Reconnect sends a fresh start snapshot with the same
+navigation session and a higher sequence; a new ATAK navigation uses a new UUID.
+Writes are connection-generation fenced, and a queued write is not an
+acknowledgement of watch delivery.
+
+A matching stop ends only the phone-owned watch session. `completed: true` is
+sent on native final-vertex arrival, or when navigation stops after that native
+arrival; cancellation, route removal or mode shutdown sends `completed: false`.
+Companion never infers arrival from watch GPS or advances a waypoint itself.
+ATAK 5.6 uses its route-method arrival bubble: defaults are 10 m walking/swimming,
+20 m driving, 100 m watercraft and 1,000 m flying. `waypointBubble.<method>`
+preferences override these defaults; the native navigation loop adds the phone
+position's circular error when available. Intermediate progression is ATAK's
+arrival/departure logic, not a new Companion distance threshold. These details
+are verified against the 5.6 SDK (`RouteNavigator.getBubbleRadius`, its navigation
+loop, `RouteNavigationManager`, and `RouteNavigationViewModel.onArrivedAtPoint`).
+Paired hardware acceptance still needs a corresponding watch build: start,
+next/previous, edit, disconnect/reconnect, cancel, and final arrival.
+
+The reverse command is `msg_type=watch_route_navigation`, payload `version: 1`,
+UUID `requestId`, watch-proposed UUID `sessionId`, `action` (`start` or `stop`)
+and `routeUid`. Start also supplies raw checkpoint `targetPointIndex` and can
+include full `routeCot`. Existing native geometry must match (raw count and
+coordinates within ATAK's export precision); it is never overwritten. A
+watch-only route is validated and imported through ATAK's local importer, not
+dispatched to network/server connections. Checkpoint UID collisions with other
+phone map items are rejected. Stops must match the current native route and
+session. The acknowledgement `route_navigation_ack` echoes `requestId`,
+`sessionId` and `ok`, with an explicit `error` on failure. Native snapshots reuse
+the proposed session ID, so stopping before an acknowledgement can fence late
+starts. Request receipts and ended-session tombstones are bounded; duplicates
+never restart navigation. The watch uses an eight-second acknowledgement/state
+timeout and sends a scoped stop on timeout.
+
+Garmin uses the same command/acknowledgement names under `msgType`, with
+`relaySession` in every payload and `serverId` on starts. It must advertise
+`routeVersion: 1` and `routeNavigationVersion: 1` in `relay_hello`; Companion
+confirms navigation version in `relay_status` only for an exclusive current
+watch link. Start requires an existing native route from the same server
+identity. Every start/progress sends the existing, capacity-accounted Garmin
+`route` snapshot before `phone_route_navigation`; state includes `serverId`
+instead of XML. Stops retain that same server identity. Existing 8-route,
+64-vertex-per-route, 128-total-vertex and message-size bounds are not bypassed.
+Unavailable, mismatched or capacity-rejected routes fail explicitly. Garmin
+does not receive XML or import watch-only geometry, and existing Garmin
+marker/PLI forwarding is unchanged.
+Garmin route snapshots also retain optional `method` (ATAK's serialized route
+method) and per-vertex `type` (`b-m-p-w` checkpoint, `b-m-p-c` control; missing
+means control), without filtering vertices. These support standalone watch
+guidance; bonded progression still comes only from native ATAK.
+
 Paired BLE Bloodhound synchronization (WEARTAK-78)
 
 While connected to a bonded WearTAK watch, starting native ATAK Bloodhound

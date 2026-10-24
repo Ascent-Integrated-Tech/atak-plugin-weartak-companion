@@ -30,6 +30,12 @@ final class GarminChatPolicy {
         status.put("reliableDelivery", true);
         status.put("phoneLocation", true);
         status.put("chatGroups", false);
+        Object routeNavigation = hello.opt("routeNavigationVersion");
+        if (bloodhoundSupported && routeNavigation instanceof Number
+                && ((Number) routeNavigation).doubleValue() == 1.0d
+                && hello.optInt("routeVersion", 0) == 1) {
+            status.put("routeNavigationVersion", 1);
+        }
         Object version = hello.opt("bloodhoundVersion");
         if (bloodhoundSupported && version instanceof Number
                 && ((Number) version).doubleValue() == 1.0d) {

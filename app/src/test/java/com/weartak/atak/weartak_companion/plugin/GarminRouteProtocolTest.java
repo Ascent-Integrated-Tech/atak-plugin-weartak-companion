@@ -12,6 +12,20 @@ import java.util.Map;
 import static org.junit.Assert.*;
 
 public class GarminRouteProtocolTest {
+    @Test public void methodAndCheckpointMetadataPreserveRawControlVertices() {
+        String xml = "<event uid='r' type='b-m-r'><detail><link_attr method='Walking'/>"
+                + "<link point='0,0' type='b-m-p-w'/><link point='1,1' type='b-m-p-c'/>"
+                + "<link point='2,2'/><link point='3,3' type='b-m-p-w'/></detail></event>";
+        GarminRouteProtocol.Route route = GarminRouteProtocol.fromCotXml(xml, null, "r");
+        assertEquals("Walking", route.payload().get("method"));
+        assertEquals(4, route.points.size());
+        assertEquals("b-m-p-w", route.points.get(0).payload().get("type"));
+        assertEquals("b-m-p-c", route.points.get(1).payload().get("type"));
+        assertFalse(route.points.get(2).payload().containsKey("type"));
+        assertThrows(IllegalArgumentException.class, () ->
+                GarminRouteProtocol.fromCotXml(xml.replace("Walking", "Unknown"), null, "r"));
+    }
+
     @Test public void normalizesAndBuildsAtomicVersionedPayload() {
         GarminRouteProtocol.Route route = GarminRouteProtocol.route("server", "route-1",
                 "Patrol", "Mission", "sender", Arrays.asList(

@@ -23,12 +23,20 @@ field_report_regressions:
         "$main/PhonePositionActions.java" "$main/WatchMessageIds.java" \
         "$main/LegacyPliCot.java" \
         "$main/PhoneMarkerRelay.java" "$main/PhoneUserRelay.java" \
+        "$main/PhoneRouteNavigationRelay.java" \
+        "$main/RouteNavigationControl.java" "$main/RouteNavigationCot.java" \
+        "$main/RouteNavigationTransport.java" "$main/GarminRouteNavigationTransport.java" \
+        "$main/GarminRouteProtocol.java" "$main/GarminRouteForwarder.java" \
         "$main/SourceCotTiming.java" \
         "$main/GarminEntityAdapter.java" "$main/GarminEntityForwarder.java" \
         "$main/ConnectionModeController.java" \
         "$tests/PhonePositionActionsTest.java" "$tests/WatchMessageIdsTest.java" \
         "$tests/LegacyPliCotTest.java" \
         "$tests/PhoneMarkerRelayTest.java" "$tests/PhoneUserLifetimeWarningsTest.java" \
+        "$tests/PhoneRouteNavigationRelayTest.java" \
+        "$tests/RouteNavigationControlTest.java" "$tests/RouteNavigationCotTest.java" \
+        "$tests/GarminRouteNavigationTransportTest.java" \
+        "$tests/GarminRouteProtocolTest.java" "$tests/GarminRouteForwarderTest.java" \
         "$tests/SourceCotTimingTest.java" \
         "$tests/GarminEntityAdapterTest.java" "$tests/GarminEntityForwarderTest.java"
       java -cp '.regression-classes:.regression-libs/*' org.junit.runner.JUnitCore \
@@ -36,6 +44,12 @@ field_report_regressions:
         com.weartak.atak.weartak_companion.plugin.WatchMessageIdsTest \
         com.weartak.atak.weartak_companion.plugin.LegacyPliCotTest \
         com.weartak.atak.weartak_companion.plugin.PhoneMarkerRelayTest \
+        com.weartak.atak.weartak_companion.plugin.PhoneRouteNavigationRelayTest \
+        com.weartak.atak.weartak_companion.plugin.RouteNavigationControlTest \
+        com.weartak.atak.weartak_companion.plugin.RouteNavigationCotTest \
+        com.weartak.atak.weartak_companion.plugin.GarminRouteNavigationTransportTest \
+        com.weartak.atak.weartak_companion.plugin.GarminRouteProtocolTest \
+        com.weartak.atak.weartak_companion.plugin.GarminRouteForwarderTest \
         com.weartak.atak.weartak_companion.plugin.PhoneUserLifetimeWarningsTest \
         com.weartak.atak.weartak_companion.plugin.SourceCotTimingTest \
         com.weartak.atak.weartak_companion.plugin.GarminEntityAdapterTest \

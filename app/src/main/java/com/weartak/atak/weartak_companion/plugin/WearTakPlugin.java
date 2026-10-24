@@ -181,6 +181,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
+    private PhoneRouteNavigationBridge phoneRouteNavigation;
+    private GarminRouteNavigationTransport garminRouteNavigationTransport;
     private PhoneUserMapRelay phoneUserRelay;
     private WatchChatEchoSuppressor chatEchoSuppressor;
     private CotServiceRemote cotServiceRemote;
@@ -789,6 +791,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 }
                 BloodhoundBridge bridge = bloodhoundBridge;
                 if (bridge != null && bridge.handleJson(jsonLine)) return;
+                if (phoneRouteNavigation != null && phoneRouteNavigation.handleJson(jsonLine)) return;
 
                 // CoT forwarder path (your design)
                 if (bleCotBridge != null) {
@@ -1734,6 +1737,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     runnable -> mainHandler.post(runnable),
                     () -> garminEnabled && connectionModes.isCurrent(token) && garminClient == owner);
             garminRoutes.start();
+            garminRouteNavigationTransport = new GarminRouteNavigationTransport(
+                    () -> currentGarminBloodhoundLink(token, owner), garminRoutes);
+            phoneRouteNavigation = new PhoneRouteNavigationBridge(garminRouteNavigationTransport);
             startPhoneAlertForwarding(token);
             garminClient.start();
     }
@@ -1977,6 +1983,18 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void handleGarminMessage(JSONObject envelope, GarminEntityForwarder.Link link) {
         if (!garminEnabled) return;
         String msgType = envelope.optString("msgType", "");
+        if ("watch_route_navigation".equals(msgType)) {
+            try {
+                if (garminRouteNavigationTransport != null && phoneRouteNavigation != null) {
+                    phoneRouteNavigation.handleJson(garminRouteNavigationTransport.inbound(envelope, link));
+                } else {
+                    LogX.w(TAG, "Garmin navigation bridge unavailable");
+                }
+            } catch (org.json.JSONException | IllegalArgumentException e) {
+                LogX.w(TAG, "Invalid Garmin route navigation request", e);
+            }
+            return;
+        }
         if (PhoneManagementRelease.ACK.equals(msgType)
                 || PhoneManagementRelease.ACK.equals(envelope.optString("type", ""))) {
             handleManagementReleaseAck(envelope.optJSONObject("payload"), link);
@@ -2068,9 +2086,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         phoneMarkerRelay.start(MapView.getMapView());
         phoneUserRelay = new PhoneUserMapRelay(bleClient);
         phoneUserRelay.start(MapView.getMapView());
+        if (!setupPurpose && !gatewayPurpose) {
+            phoneRouteNavigation = new PhoneRouteNavigationBridge(bleClient);
+        }
     }
 
     private void unregisterMapItemListener() {
+        if (phoneRouteNavigation != null) phoneRouteNavigation.close();
+        phoneRouteNavigation = null;
+        garminRouteNavigationTransport = null;
         if (phoneMarkerRelay != null) phoneMarkerRelay.stop();
         phoneMarkerRelay = null;
         if (phoneUserRelay != null) phoneUserRelay.stop();

@@ -40,15 +40,17 @@ final class GarminRouteProtocol {
         final String name;
         final String missionName;
         final String senderUid;
+        final String method;
         final List<Point> points;
 
         Route(String serverId, String uid, String name, String missionName,
-                String senderUid, List<Point> points) {
+                String senderUid, String method, List<Point> points) {
             this.serverId = serverId;
             this.uid = uid;
             this.name = name;
             this.missionName = missionName;
             this.senderUid = senderUid;
+            this.method = method;
             this.points = Collections.unmodifiableList(new ArrayList<>(points));
         }
 
@@ -62,6 +64,7 @@ final class GarminRouteProtocol {
             payload.put("name", name);
             if (missionName != null) payload.put("missionName", missionName);
             if (senderUid != null) payload.put("senderUid", senderUid);
+            if (method != null) payload.put("method", method);
             List<Map<String, Object>> vertices = new ArrayList<>();
             for (Point point : points) vertices.add(point.payload());
             payload.put("points", vertices);
@@ -73,11 +76,17 @@ final class GarminRouteProtocol {
         final double lat;
         final double lon;
         final String name;
+        final String type;
 
         Point(double lat, double lon, String name) {
+            this(lat, lon, name, null);
+        }
+
+        Point(double lat, double lon, String name, String type) {
             this.lat = lat;
             this.lon = lon;
             this.name = name;
+            this.type = type;
         }
 
         Map<String, Object> payload() {
@@ -85,6 +94,7 @@ final class GarminRouteProtocol {
             payload.put("lat", lat);
             payload.put("lon", lon);
             if (name != null) payload.put("name", name);
+            if (type != null) payload.put("type", type);
             return payload;
         }
     }
@@ -93,11 +103,20 @@ final class GarminRouteProtocol {
 
     static Route route(String serverId, String uid, String name, String missionName,
             String senderUid, List<Point> points) {
+        return route(serverId, uid, name, missionName, senderUid, null, points);
+    }
+
+    static Route route(String serverId, String uid, String name, String missionName,
+            String senderUid, String method, List<Point> points) {
         requireText(serverId, "serverId", MAX_SERVER_ID_BYTES, false);
         requireText(uid, "uid", MAX_UID_BYTES, false);
         requireText(name, "name", MAX_NAME_BYTES, false);
         if (missionName != null) requireText(missionName, "missionName", MAX_MISSION_BYTES, true);
         if (senderUid != null) requireText(senderUid, "senderUid", MAX_SENDER_BYTES, true);
+        if (method != null && !"Walking".equals(method) && !"Swimming".equals(method)
+                && !"Driving".equals(method) && !"Watercraft".equals(method) && !"Flying".equals(method)) {
+            throw new IllegalArgumentException("Unsupported route method");
+        }
         if (points == null || points.size() < 2 || points.size() > MAX_POINTS_PER_ROUTE) {
             throw new IllegalArgumentException("Route must contain 2 to 64 vertices");
         }
@@ -109,9 +128,10 @@ final class GarminRouteProtocol {
             }
             String pointName = point.name;
             if (pointName != null) requireText(pointName, "point name", MAX_NAME_BYTES, true);
-            normalized.add(new Point(point.lat, point.lon, pointName));
+            if (point.type != null) requireText(point.type, "point type", 32, false);
+            normalized.add(new Point(point.lat, point.lon, pointName, point.type));
         }
-        Route route = new Route(serverId, uid, name, missionName, senderUid, normalized);
+        Route route = new Route(serverId, uid, name, missionName, senderUid, method, normalized);
         if (!fitsEnvelope("route", route.payload())) {
             throw new IllegalArgumentException("Route exceeds the 6000-byte Garmin message limit");
         }
@@ -188,7 +208,8 @@ final class GarminRouteProtocol {
                 }
             }
             List<Point> points = readPoints(detail);
-            return route(serverId, uid, name, missionName, senderUid, points);
+            String method = attribute(firstDescendant(detail, "link_attr"), "method");
+            return route(serverId, uid, name, missionName, senderUid, method, points);
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
@@ -206,13 +227,13 @@ final class GarminRouteProtocol {
                     && element.hasAttribute("lat") && element.hasAttribute("lon")) {
                 String name = choose(attribute(element, "name"), attribute(element, "callsign"));
                 points.add(new Point(Double.parseDouble(element.getAttribute("lat")),
-                        Double.parseDouble(element.getAttribute("lon")), name));
+                        Double.parseDouble(element.getAttribute("lon")), name, attribute(element, "type")));
             } else if ("link".equals(element.getTagName()) && element.hasAttribute("point")) {
                 String[] coordinates = element.getAttribute("point").split(",", -1);
                 if (coordinates.length < 2) throw new IllegalArgumentException("Invalid route point");
                 String name = choose(attribute(element, "name"), attribute(element, "callsign"));
                 points.add(new Point(Double.parseDouble(coordinates[0]),
-                        Double.parseDouble(coordinates[1]), name));
+                        Double.parseDouble(coordinates[1]), name, attribute(element, "type")));
             }
         }
         return points;
