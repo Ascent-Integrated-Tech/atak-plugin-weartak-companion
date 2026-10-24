@@ -204,6 +204,7 @@ final class GarminMapEntitySource implements GarminEntityForwarder.Source {
         }
         CotDetail radius = event.findDetail("radius");
         number(meta, "radius", attribute(radius, "value"));
+        if (event.findDetail("__video") != null) meta.put("__video", true);
         put(meta, "category", attribute(emergency, "type"));
         put(meta, "how", event.getHow());
         if (event.getTime() != null) meta.put("time", event.getTime().toString());

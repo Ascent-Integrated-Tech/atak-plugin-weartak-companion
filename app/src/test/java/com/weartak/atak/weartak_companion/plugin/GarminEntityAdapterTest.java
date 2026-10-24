@@ -100,6 +100,54 @@ public class GarminEntityAdapterTest {
         }
     }
 
+    @Test public void videoAliasMarkersRelayAsPointsWithPresenceOnlyVideo() {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("stale", "2099-01-01T00:00:00Z");
+        meta.put("callSign", "Gate Cam");
+        meta.put("__video", true);
+        assertTrue(GarminEntityAdapter.supportedType("b-i-v"));
+        Map<String, Object> camera = GarminEntityAdapter.normalize("cam-1", 38, -77,
+                "b-i-v", meta, false, false);
+        assertNotNull(camera);
+        assertEquals("b-i-v", camera.get("type"));
+        assertEquals(true, camera.get("isPoint"));
+        assertEquals(Collections.emptyMap(), camera.get("__video"));
+        assertEquals("Gate Cam", camera.get("callSign"));
+        assertFalse(camera.containsKey("isUser"));
+
+        meta.remove("__video");
+        Map<String, Object> bare = GarminEntityAdapter.normalize("cam-2", 38, -77,
+                "b-i-v", meta, false, false);
+        assertEquals(true, bare.get("isPoint"));
+        assertFalse(bare.containsKey("__video"));
+        assertFalse(GarminEntityAdapter.supportedType("b-i-v-x"));
+        assertFalse(GarminEntityAdapter.supportedType("b-i"));
+    }
+
+    @Test public void videoBearingTracksCarrySanitizedVideoWithoutStreamAttributes() {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("stale", "2099-01-01T00:00:00Z");
+        meta.put("__video", true);
+        Map<String, Object> uav = GarminEntityAdapter.normalize("uav", 38, -77,
+                "a-f-A-M-F-Q", meta, false, false);
+        assertEquals(Collections.emptyMap(), uav.get("__video"));
+        assertFalse(uav.containsKey("isPoint"));
+
+        Map<String, Object> leaked = new HashMap<>();
+        leaked.put("url", "rtsp://user:secret@10.0.0.1/stream");
+        meta.put("__video", leaked);
+        Map<String, Object> unsafe = GarminEntityAdapter.normalize("uav", 38, -77,
+                "a-f-A-M-F-Q", meta, false, false);
+        assertFalse(unsafe.containsKey("__video"));
+        assertFalse(unsafe.toString().contains("rtsp"));
+
+        meta.remove("__video");
+        meta.put("callSign", "camera sensor video");
+        Map<String, Object> labelled = GarminEntityAdapter.normalize("spi", 38, -77,
+                "b-m-p-s-p-i", meta, false, false);
+        assertFalse(labelled.containsKey("__video"));
+    }
+
     @Test public void coordinateFreeDeleteKeepsLinkedTargetAndIsNotFilteredAsStale() {
         Map<String, Object> meta = new HashMap<>();
         meta.put("stale", "2000-01-01T00:00:00Z");
