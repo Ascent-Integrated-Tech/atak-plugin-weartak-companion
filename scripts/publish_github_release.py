@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import argparse
+import base64
 import hashlib
 import json
 import os
@@ -22,6 +24,7 @@ EXPECTED_PROJECT = "aegorsuch/atak-plugin-weartak-companion"
 EXPECTED_SERVER = "git.tak.gov"
 EXPECTED_BRANCH = "develop"
 EXPECTED_GITHUB_REPOSITORY = "Ascent-Integrated-Tech/atak-plugin-weartak-companion"
+EXPECTED_PERSONAL_GITHUB_REPOSITORY = "aegorsuch/atak-plugin-weartak-companion"
 RELEASE_TAG = "tak-gov-ci-cd-pipeline"
 RELEASE_TITLE = "TAK.gov CI/CD Pipeline Release"
 ASSET_PREFIX = "WearTAK-ATAK-Plugin-civ-release-pipeline-"
@@ -123,6 +126,145 @@ class GitHubClient(ApiClient):
         if status != 200:
             raise PublishError(f"Could not inspect the fixed GitHub tag (HTTP {status})")
 
+    def require_branch_sha(self, branch: str, expected_sha: str) -> None:
+        path = f"{self.repository_path}/branches/{urllib.parse.quote(branch, safe='')}"
+        status, result = self.json_request("GET", path)
+        if status != 200 or not isinstance(result, dict):
+            raise PublishError(
+                f"Could not verify {self.repository} {branch} mirror freshness (HTTP {status})"
+            )
+        actual_sha = result.get("commit", {}).get("sha")
+        if actual_sha != expected_sha:
+            raise PublishError(
+                f"Personal GitHub develop mirror is stale: expected {expected_sha}, "
+                f"found {actual_sha or 'no branch SHA'}. Non-force sync canonical develop "
+                "to the personal mirror before publication."
+            )
+
+    def sync_personal_develop(self, source_sha: str, project_dir: Path) -> None:
+        if self.repository != EXPECTED_PERSONAL_GITHUB_REPOSITORY:
+            raise PublishError("Automatic source synchronization is personal-mirror only.")
+
+        credentials = base64.b64encode(
+            f"x-access-token:{self.token}".encode("utf-8")
+        ).decode("ascii")
+        settings = (
+            ("credential.helper", ""),
+            ("http.extraHeader", ""),
+            (
+                f"http.https://github.com/{EXPECTED_PERSONAL_GITHUB_REPOSITORY}.git.extraHeader",
+                f"Authorization: Basic {credentials}",
+            ),
+            ("http.followRedirects", "false"),
+            ("core.hooksPath", os.devnull),
+        )
+        git_env = {
+            name: os.environ[name]
+            for name in (
+                "PATH",
+                "HOME",
+                "LANG",
+                "LC_ALL",
+                "TMPDIR",
+                "TMP",
+                "TEMP",
+                "SystemRoot",
+                "SSL_CERT_FILE",
+                "SSL_CERT_DIR",
+                "GIT_SSL_CAINFO",
+                "GIT_SSL_CAPATH",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "NO_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+            )
+            if name in os.environ
+        }
+        git_env.update(
+            GIT_CONFIG_COUNT=str(len(settings)),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_TERMINAL_PROMPT="0",
+        )
+        for index, (key, value) in enumerate(settings):
+            git_env[f"GIT_CONFIG_KEY_{index}"] = key
+            git_env[f"GIT_CONFIG_VALUE_{index}"] = value
+
+        def git(*args: str, check: bool = True) -> str:
+            try:
+                result = subprocess.run(
+                    ["git", *args],
+                    cwd=project_dir,
+                    env=git_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+            except OSError as error:
+                raise PublishError(
+                    "Git is unavailable for safe personal develop synchronization"
+                ) from error
+            if check and result.returncode:
+                raise PublishError(
+                    "Personal develop synchronization failed its source, ancestry, "
+                    "or non-force push check. No force, tag changes, or ref deletion "
+                    "will be attempted."
+                )
+            return result.stdout.strip()
+
+        if git("rev-parse", "HEAD") != source_sha:
+            raise PublishError("CI checkout does not match the publishing pipeline source.")
+
+        ref_path = "/git/ref/heads/develop"
+        status, remote = self.json_request("GET", ref_path)
+        if status != 200 or not isinstance(remote, dict):
+            raise PublishError(
+                f"Could not inspect personal develop ref before sync (HTTP {status})"
+            )
+        remote_object = remote.get("object", {})
+        remote_sha = remote_object.get("sha")
+        if (
+            remote_object.get("type") != "commit"
+            or not isinstance(remote_sha, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", remote_sha)
+        ):
+            raise PublishError("Personal develop must already point to a verified commit.")
+
+        if remote_sha != source_sha:
+            repository_url = f"https://github.com/{EXPECTED_PERSONAL_GITHUB_REPOSITORY}.git"
+            git(
+                "fetch",
+                "--no-tags",
+                "--no-recurse-submodules",
+                repository_url,
+                "refs/heads/develop",
+            )
+            if git("rev-parse", "FETCH_HEAD") != remote_sha:
+                raise PublishError(
+                    "Personal develop changed during source inspection; refusing update."
+                )
+            git("merge-base", "--is-ancestor", remote_sha, source_sha)
+            git(
+                "push",
+                "--no-follow-tags",
+                "--recurse-submodules=no",
+                repository_url,
+                f"{source_sha}:refs/heads/develop",
+            )
+
+        status, confirmed = self.json_request("GET", ref_path)
+        if status != 200 or not isinstance(confirmed, dict):
+            raise PublishError(
+                f"Could not verify personal develop after sync (HTTP {status})"
+            )
+        if confirmed.get("object", {}).get("sha") != source_sha:
+            raise PublishError(
+                "Personal develop readback differs from the canonical pipeline source."
+            )
+
     def create_release(self) -> dict[str, Any]:
         status, result = self.json_request(
             "POST",
@@ -133,6 +275,7 @@ class GitHubClient(ApiClient):
                 "body": "No signed distributable has been published yet.",
                 "draft": False,
                 "prerelease": False,
+                "make_latest": "true",
             },
         )
         if status != 201:
@@ -196,6 +339,7 @@ class GitHubClient(ApiClient):
         metadata = {"body": body}
         if title is not None:
             metadata["name"] = title
+        metadata["make_latest"] = "true"
         status, _ = self.json_request(
             "PATCH",
             f"{self.repository_path}/releases/{release_id}",
@@ -259,9 +403,12 @@ class GitLabClient(ApiClient):
         return branch
 
 
-def require_environment(env: dict[str, str]) -> dict[str, str]:
+def require_environment(env: dict[str, str], *, personal: bool = False) -> dict[str, str]:
+    token_name = (
+        "GITHUB_PERSONAL_RELEASE_TOKEN" if personal else "GITHUB_RELEASE_TOKEN"
+    )
     required = (
-        "GITHUB_RELEASE_TOKEN",
+        token_name,
         "GITHUB_REPOSITORY",
         "CI_SERVER_HOST",
         "CI_PROJECT_PATH",
@@ -283,11 +430,20 @@ def require_environment(env: dict[str, str]) -> dict[str, str]:
         "CI_PROJECT_PATH": EXPECTED_PROJECT,
         "CI_COMMIT_BRANCH": EXPECTED_BRANCH,
         "CI_PIPELINE_SOURCE": "push",
-        "GITHUB_REPOSITORY": EXPECTED_GITHUB_REPOSITORY,
+        "GITHUB_REPOSITORY": (
+            EXPECTED_PERSONAL_GITHUB_REPOSITORY
+            if personal
+            else EXPECTED_GITHUB_REPOSITORY
+        ),
     }
     for name, value in expected.items():
         if env[name] != value:
             raise PublishError(f"Refusing publication from unexpected {name}")
+    if personal and env.get("GITHUB_PERSONAL_REPOSITORY") != EXPECTED_PERSONAL_GITHUB_REPOSITORY:
+        raise PublishError(
+            "Personal publishing requires GITHUB_PERSONAL_REPOSITORY="
+            + EXPECTED_PERSONAL_GITHUB_REPOSITORY
+        )
     if env.get("CI_COMMIT_REF_PROTECTED") != "true":
         raise PublishError("Refusing publication from an unprotected branch")
     if not re.fullmatch(r"[0-9]+", env["CI_PIPELINE_ID"]):
@@ -295,6 +451,20 @@ def require_environment(env: dict[str, str]) -> dict[str, str]:
     if not re.fullmatch(r"[0-9a-fA-F]{40}", env["CI_COMMIT_SHA"]):
         raise PublishError("CI_COMMIT_SHA must be a full commit SHA")
     return env
+
+
+def release_destination(
+    env: dict[str, str], *, personal: bool = False
+) -> tuple[str, str]:
+    repository = (
+        EXPECTED_PERSONAL_GITHUB_REPOSITORY
+        if personal
+        else EXPECTED_GITHUB_REPOSITORY
+    )
+    token_name = (
+        "GITHUB_PERSONAL_RELEASE_TOKEN" if personal else "GITHUB_RELEASE_TOKEN"
+    )
+    return repository, env[token_name]
 
 
 def select_signed_apk(project_dir: Path) -> Path:
@@ -477,8 +647,16 @@ def managed_asset_checksum(asset: dict[str, Any]) -> str | None:
     return None
 
 
-def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> str:
+def publish(
+    env: dict[str, str],
+    gitlab: GitLabClient,
+    github: GitHubClient,
+    *,
+    verify_personal_mirror: bool = False,
+) -> str:
     verify_source_pipeline(gitlab, env)
+    if verify_personal_mirror:
+        github.require_branch_sha(EXPECTED_BRANCH, env["CI_COMMIT_SHA"])
     github.require_existing_tag()
     release = github.get_release()
     previous_release_owned = (
@@ -585,13 +763,28 @@ def publish(env: dict[str, str], gitlab: GitLabClient, github: GitHubClient) -> 
 
 def main() -> int:
     try:
-        env = require_environment(dict(os.environ))
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--personal",
+            action="store_true",
+            help="publish to the allowlisted personal GitHub mirror",
+        )
+        args = parser.parse_args()
+        env = require_environment(dict(os.environ), personal=args.personal)
         gitlab = GitLabClient(
             env["CI_API_V4_URL"], env["CI_PROJECT_ID"], env["CI_JOB_TOKEN"]
         )
-        github = GitHubClient(env["GITHUB_REPOSITORY"], env["GITHUB_RELEASE_TOKEN"])
-        asset_name = publish(env, gitlab, github)
-        print(f"Published {asset_name} to the stable rolling GitHub release.")
+        repository, token = release_destination(env, personal=args.personal)
+        github = GitHubClient(repository, token)
+        if args.personal:
+            verify_source_pipeline(gitlab, env)
+            github.sync_personal_develop(
+                env["CI_COMMIT_SHA"], Path(env["CI_PROJECT_DIR"])
+            )
+        asset_name = publish(
+            env, gitlab, github, verify_personal_mirror=args.personal
+        )
+        print(f"Published stable rolling GitHub release asset: {repository}:{asset_name}")
         return 0
     except PublishError as error:
         print(f"ERROR: {error}", file=sys.stderr)

@@ -14,7 +14,8 @@ archives, signing material, logs, reports, and SBOMs are not uploaded release
 assets. GitHub's automatic source-code archive links remain a repository-level
 GitHub behavior.
 
-The rolling release uses the fixed tag `tak-gov-ci-cd-pipeline`. Each asset is
+The rolling release uses the fixed tag `tak-gov-ci-cd-pipeline` and every create
+or update explicitly marks it as GitHub's **Latest** release. Each asset is
 named `WearTAK-Companion-<version>-p<project-pipeline-IID>.apk`; the release
 page offers it in the native Assets section. Its notes include source commit, pipeline,
 manifest versionName/versionCode, and SHA-256. The versioned Forge release title
@@ -61,19 +62,54 @@ authenticated writes to arbitrary redirect destinations.
 Before enabling the publisher, create `GITHUB_RELEASE_TOKEN` as a masked and
 protected CI/CD variable in the canonical
 `aegorsuch/atak-plugin-weartak-companion` project. Use a GitHub fine-grained
-token restricted to `Ascent-Integrated-Tech/atak-plugin-weartak-companion` with only
-**Contents: read and write** permission. The `develop` branch must remain
-protected so GitLab supplies the token only to its protected pipeline. The CI
-image must provide Python 3 and Android
-`apksigner`; availability must be confirmed before the first live run. The
-publisher also uses the same-project `CI_JOB_TOKEN` to read the current
-`develop` branch tip; it does not copy local GitHub credentials or require
-another GitLab access token.
+token restricted to `Ascent-Integrated-Tech/atak-plugin-weartak-companion` with
+only **Contents: read and write** permission.
 
-No GitHub release/tag or CI variable is created by this source change. The first
-release is created against the pre-created fixed tag by the first eligible
-successful pipeline after the variable is configured and the change is merged
-to canonical `develop`.
+Personal GitHub publishing uses a separate fine-grained token because a token
+is scoped to one resource owner. Keep the existing organization token unchanged.
+To enable the personal destination:
+
+- Create `GITHUB_PERSONAL_RELEASE_TOKEN` as a separate masked and protected
+  GitLab CI/CD variable. Scope its fine-grained token to the `aegorsuch` owner
+  and only `aegorsuch/atak-plugin-weartak-companion`, with **Contents: read and
+  write** permission. Set its environment scope to
+  `github-personal-rolling-release`, so only
+  the dedicated personal publisher job receives it. This is separate from, and
+  does not replace or broaden, `GITHUB_RELEASE_TOKEN`.
+- Set the protected, non-secret project variable `PUBLISH_PERSONAL_GITHUB=true` to
+  enable the personal job. The job itself fixes both repository variables to
+  `aegorsuch/atak-plugin-weartak-companion`; no destination variable or personal
+  credential is exposed to the organization publisher.
+- Ensure the personal repository already has the fixed `develop` mirror branch
+  and fixed anchor tag `tak-gov-ci-cd-pipeline`.
+
+The dedicated `--personal` publisher validates its allowlisted destination and
+requires the separate token. Before publication, it synchronizes only the
+personal repository's `develop` branch from the exact pipeline checkout: the CI
+HEAD must match `CI_COMMIT_SHA`, the existing personal tip must be an ancestor,
+and the publisher uses a normal non-force push with tags and other refs
+excluded. It then reads the branch back and fails before publishing unless it
+equals `CI_COMMIT_SHA`. The job uses full Git history for the ancestry check.
+A divergent personal branch fails closed and requires maintainer
+reconciliation; it is never force-pushed or reset. The canonical project has
+no separate GitLab remote mirror configured, so this publisher job provides
+the durable fast-forward sync instead of relying on a manually current mirror.
+The two publisher jobs share a resource group, serializing org and personal
+rolling-release updates. Without `PUBLISH_PERSONAL_GITHUB=true` and the separately
+environment-scoped token, publication remains limited to the organization
+repository. Do not copy local GitHub credentials into CI. The `develop` branch
+must remain protected. The CI image must provide Python 3, Git, and Android
+`apksigner`; availability must be confirmed before the first live run. The
+publisher also uses the same-project `CI_JOB_TOKEN` to verify the current
+canonical `develop` branch tip; it does not require another GitLab access
+token.
+
+This source change does not create or move GitHub tags or modify GitLab project
+variables. The personal destination remains inactive until the enable variable
+and separately environment-scoped token are configured. Each enabled
+destination must already have its fixed anchor tag; the first eligible
+successful pipeline creates that destination's rolling release if it does not
+already exist.
 
 ## Automatic tester checklist
 
