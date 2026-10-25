@@ -110,11 +110,11 @@ The status adds `unitPrefsVersion: 1` and the same `unitPrefs` dictionary, retai
 all negotiated capabilities and its relay session on live updates. Older Garmin
 builds receive no new unit fields; their profile-settings transactions are unchanged.
 
-### Companion diagnostic logging (WEARTAK-274)
+### Companion logging (WEARTAK-274)
 
-Turn on **Diagnostics** before reproducing a problem. This opt-in is off by
+Turn on **Logging** before reproducing a problem. This opt-in is off by
 default, saved in Companion preferences across ATAK restarts and in-place updates,
-and remains on until explicitly switched off. **Export** manually opens ATAK's
+and remains on until explicitly switched off. **Export logs** manually opens ATAK's
 existing data-package recipient workflow for all retained logs; nothing is sent
 automatically. The files can also be retrieved from ATAK's `companion-logs`
 storage directory when using an authorized local debugging connection.

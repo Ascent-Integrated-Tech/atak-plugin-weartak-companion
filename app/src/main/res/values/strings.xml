@@ -2,12 +2,11 @@
 <resources>
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
-    <string name="diagnostics_label">Diagnostics</string>
-    <string name="diagnostics_enabled">Diagnostics enabled. Privacy-safe events are stored locally until disabled.</string>
-    <string name="diagnostics_export">Export</string>
-    <string name="diagnostics_export_description">Manually export retained Companion diagnostic logs using ATAK</string>
-    <string name="diagnostics_privacy_note">Local event categories only; message content, identities, credentials, server addresses and coordinates are excluded.</string>
-    <string name="log_capture_problem">Companion log: %1$s</string>
+    <string name="diagnostics_label">Logging</string>
+    <string name="diagnostics_enabled">Logging is on. Privacy-safe events are stored locally until you turn it off.</string>
+    <string name="diagnostics_export">Export logs</string>
+    <string name="diagnostics_export_description">Manually export saved Companion logs using ATAK</string>
+    <string name="log_capture_problem">Companion logging: %1$s</string>
     <string name="watch_name_unavailable">Unknown watch</string>
     <string name="watch_bonded_as">Bonded as %1$s</string>
     <string name="watch_identity_bonded">%1$s (bonded as %2$s)</string>
