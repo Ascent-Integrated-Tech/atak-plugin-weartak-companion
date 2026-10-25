@@ -22,6 +22,7 @@ import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.widget.Toast;
@@ -76,10 +77,12 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     Pane templatePane;
 
     private static final String TAG = "WTK/Plugin";
+    private static final String KEY_DIAGNOSTICS_ENABLED = "privacy_safe_diagnostics_enabled";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile Boolean lastSettingsApplyResult = null;
     private CompanionDiagnosticLogger diagnosticLogger;
-    private Button loggingButton;
+    private Switch diagnosticsToggle;
+    private Button diagnosticsExportButton;
     private boolean identityObserverActive;
     private List<String> lastSentPhoneIdentity;
     private final Runnable liveIdentityUpdate = this::syncLivePhoneIdentity;
@@ -1620,7 +1623,9 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     Toast.LENGTH_LONG).show());
         });
         LogX.attach(diagnosticLogger);
-        updateLoggingButton();
+        if (systemBondedPreferences().getBoolean(KEY_DIAGNOSTICS_ENABLED, false))
+            startDiagnosticsCapture(false);
+        updateDiagnosticsControls();
     }
 
     private String diagnosticMetadata() {
@@ -1630,75 +1635,96 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     .getPackageInfo(host.getPackageName(), 0).versionName;
             return "Plugin version: " + BuildConfig.VERSION_NAME
                     + "\nATAK version: " + atakVersion
-                    + "\nDevice model: " + Build.MANUFACTURER + " " + Build.MODEL
-                    + "\nAndroid version: " + Build.VERSION.RELEASE
-                    + " (API " + Build.VERSION.SDK_INT + ")";
+                    + "\nAndroid API: " + Build.VERSION.SDK_INT;
         } catch (PackageManager.NameNotFoundException error) {
             throw new IllegalStateException("Cannot read ATAK version", error);
         }
     }
 
-    private void onLoggingClicked() {
+    private void onDiagnosticsToggled(boolean enabled) {
+        systemBondedPreferences().edit().putBoolean(KEY_DIAGNOSTICS_ENABLED, enabled).apply();
         CompanionDiagnosticLogger logger = diagnosticLogger;
-        if (logger == null || logger.isBusy()) return;
-        loggingButton.setEnabled(false);
-        if (logger.isLogging()) {
-            loggingButton.setText(R.string.finalizing_log);
-            loggingButton.setContentDescription(pluginContext.getString(R.string.finishing_log_description));
-            logger.stop((file, error) -> {
-                MissionPackageManifest manifest = null;
-                IOException failure = error;
-                if (failure == null) {
-                    try {
-                        if (file == null || !file.isFile())
-                            throw new IOException("Companion log file is unavailable");
-                        manifest = MissionPackageApi.CreateTempManifest("Companion Log " + file.getName());
-                        if (manifest == null || !manifest.addFile(file, "text/plain", null))
-                            throw new IOException("Cannot add Companion log to ATAK data package");
-                    } catch (IOException | RuntimeException problem) {
-                        failure = new IOException("Cannot prepare Companion data package", problem);
-                    }
-                }
-                MissionPackageManifest prepared = manifest;
-                IOException problem = failure;
-                mainHandler.post(() -> {
-                    if (diagnosticLogger != logger) return;
-                    updateLoggingButton();
-                    if (problem != null) {
-                        showLogError(problem);
-                        return;
-                    }
-                    try {
-                        if (!MissionPackageApi.Send(MapView.getMapView().getContext(),
-                                prepared, ToastSaveCallback.class, null))
-                            showLogError(new IOException("Cannot start ATAK data package send"));
-                    } catch (RuntimeException sendError) {
-                        showLogError(sendError);
-                    }
-                });
-            });
-        } else {
-            loggingButton.setText(R.string.starting_log);
-            logger.start(this::diagnosticMetadata, (file, error) -> mainHandler.post(() -> {
-                if (diagnosticLogger != logger) return;
-                updateLoggingButton();
-                if (error != null) showLogError(error);
-                else {
-                    LogX.i(TAG, "Companion diagnostic capture started");
-                    Toast.makeText(MapView.getMapView().getContext(),
-                            pluginContext.getString(R.string.log_started), Toast.LENGTH_LONG).show();
-                }
-            }));
+        if (logger == null || logger.isBusy()) {
+            updateDiagnosticsControls();
+            return;
         }
+        if (enabled) startDiagnosticsCapture(true);
+        else if (logger.isLogging()) logger.stop((file, error) -> mainHandler.post(() -> {
+            updateDiagnosticsControls();
+            if (error != null) showLogError(error);
+        }));
+        updateDiagnosticsControls();
     }
 
-    private void updateLoggingButton() {
-        if (loggingButton == null) return;
-        boolean logging = diagnosticLogger != null && diagnosticLogger.isLogging();
-        loggingButton.setEnabled(diagnosticLogger != null && !diagnosticLogger.isBusy());
-        loggingButton.setText(logging ? R.string.stop_and_send_log : R.string.start_logging);
-        loggingButton.setContentDescription(pluginContext.getString(logging
-                ? R.string.send_log_description : R.string.start_log_description));
+    private void startDiagnosticsCapture(boolean notify) {
+        CompanionDiagnosticLogger logger = diagnosticLogger;
+        if (logger == null || logger.isBusy() || logger.isLogging()) return;
+        logger.start(this::diagnosticMetadata, (file, error) -> mainHandler.post(() -> {
+            if (diagnosticLogger != logger) return;
+            updateDiagnosticsControls();
+            if (error != null) {
+                showLogError(error);
+            } else {
+                LogX.i(TAG, "Privacy-safe diagnostics capture started");
+                if (notify) Toast.makeText(MapView.getMapView().getContext(),
+                        pluginContext.getString(R.string.diagnostics_enabled),
+                        Toast.LENGTH_LONG).show();
+            }
+        }));
+        updateDiagnosticsControls();
+    }
+
+    private void exportDiagnostics() {
+        CompanionDiagnosticLogger logger = diagnosticLogger;
+        if (logger == null || logger.isBusy()) return;
+        if (logger.isLogging()) {
+            logger.stop((file, error) -> mainHandler.post(() ->
+                    sendDiagnosticLogs(logger, error)));
+        } else {
+            sendDiagnosticLogs(logger, null);
+        }
+        updateDiagnosticsControls();
+    }
+
+    private void sendDiagnosticLogs(CompanionDiagnosticLogger logger, IOException stopError) {
+        if (diagnosticLogger != logger) return;
+        IOException failure = stopError;
+        MissionPackageManifest manifest = null;
+        if (failure == null) {
+            try {
+                File[] files = logger.logs();
+                if (files.length == 0) throw new IOException("No Companion diagnostics are available");
+                manifest = MissionPackageApi.CreateTempManifest("WearTAK Companion Diagnostics");
+                if (manifest == null) throw new IOException("Cannot create Companion data package");
+                for (File file : files) {
+                    if (!file.isFile() || !manifest.addFile(file, "text/plain", null))
+                        throw new IOException("Cannot add a Companion diagnostics file to the data package");
+                }
+            } catch (IOException | RuntimeException problem) {
+                failure = new IOException("Cannot prepare Companion diagnostics package", problem);
+            }
+        }
+        if (failure == null) {
+            try {
+                if (!MissionPackageApi.Send(MapView.getMapView().getContext(),
+                        manifest, ToastSaveCallback.class, null))
+                    failure = new IOException("Cannot start ATAK data-package send");
+            } catch (RuntimeException sendError) {
+                failure = new IOException("Cannot start ATAK data-package send", sendError);
+            }
+        }
+        if (failure != null) showLogError(failure);
+        if (systemBondedPreferences().getBoolean(KEY_DIAGNOSTICS_ENABLED, false))
+            startDiagnosticsCapture(false);
+        updateDiagnosticsControls();
+    }
+
+    private void updateDiagnosticsControls() {
+        if (diagnosticsToggle == null) return;
+        diagnosticsToggle.setEnabled(diagnosticLogger != null &&
+                (diagnosticLogger.isLogging() || !diagnosticLogger.isBusy()));
+        if (diagnosticsExportButton != null)
+            diagnosticsExportButton.setEnabled(diagnosticLogger != null && !diagnosticLogger.isBusy());
     }
 
     private void showLogError(Exception error) {
@@ -2260,9 +2286,14 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         if (templatePane == null) {
             // IMPORTANT: store paneView as a FIELD (not a local)
             paneView = PluginLayoutInflater.inflate(pluginContext, R.layout.main_layout, null);
-            loggingButton = paneView.findViewById(R.id.loggingButton);
-            loggingButton.setOnClickListener(v -> onLoggingClicked());
-            updateLoggingButton();
+            diagnosticsToggle = paneView.findViewById(R.id.diagnosticsToggle);
+            diagnosticsToggle.setChecked(systemBondedPreferences()
+                    .getBoolean(KEY_DIAGNOSTICS_ENABLED, false));
+            diagnosticsToggle.setOnCheckedChangeListener((button, enabled) ->
+                    onDiagnosticsToggled(enabled));
+            diagnosticsExportButton = paneView.findViewById(R.id.diagnosticsExportButton);
+            diagnosticsExportButton.setOnClickListener(v -> exportDiagnostics());
+            updateDiagnosticsControls();
 
             templatePane = new PaneBuilder(paneView)
                     .setMetaValue(Pane.RELATIVE_LOCATION, Pane.Location.Default)

@@ -112,31 +112,28 @@ builds receive no new unit fields; their profile-settings transactions are uncha
 
 ### Companion diagnostic logging (WEARTAK-274)
 
-Use **Log** in the Companion header before reproducing a problem, then **Send**
-to stop capture and open ATAK's data-package recipient workflow. The button shows
-**Finishing...** while queued writes finish. This follows the Physiology
-Dashboard's Log/Send workflow; it does not use Android's share sheet or adb.
-Only Companion `WTK/*` logging calls are captured, including BLE scan,
-connection/disconnection and CoT dispatch events. No system logcat is read.
+Turn on **Diagnostics** before reproducing a problem. This opt-in is off by
+default, saved in Companion preferences across ATAK restarts and in-place updates,
+and remains on until explicitly switched off. **Export** manually opens ATAK's
+existing data-package recipient workflow for all retained logs; nothing is sent
+automatically. The files can also be retrieved from ATAK's `companion-logs`
+storage directory when using an authorized local debugging connection.
 
-Each UTF-8 text file includes the plugin version, installed ATAK version, device
-model, Android version, capture UTC timestamps and the Send/export UTC timestamp.
-Logs can contain operational callsigns, Bluetooth addresses, positions and message
-content: review recipients before sending. Files are stored in ATAK's
-`companion-logs` directory with UTC-stamped names, like Dashboard's `physio-logs`;
-this is ATAK storage, not plugin-private storage. Capture is opt-in and does not
-automatically resume after ATAK restarts. Previously captured files survive a
-restart; an interrupted/not-sent file says `Export UTC: not sent`.
+Capture stores only UTC timestamps, severity, fixed `WTK/*` component names and
+coarse event categories (such as transport, location, report, negotiation, sync,
+command, lifecycle and failure). Raw log messages, exception details, coordinates,
+callsigns, device identifiers, Bluetooth addresses, credentials, server addresses
+and payloads are never written. Metadata is limited to plugin version, ATAK
+version and Android API level; Android logcat is not read. Duplicate events are
+rate-limited and a bounded 256-record queue drops excess events instead of
+delaying BLE/UI work.
 
-The plugin retains at most three capture files, each at most 2 MiB (6 MiB total).
-Starting another capture removes the oldest excess capture files, never unrelated
-files or ATAK-managed data packages. At the size limit, additional capture stops,
-a notification asks the user to press **Send**, and the partial log has an explicit
-size-limit footer. A bounded 256-record queue drops excess diagnostics instead of
-delaying BLE/UI work; the footer reports the drop count. File creation, writes,
-cleanup, finalization and data-package manifest preparation run on a single writer
-worker. ATAK owns package delivery and its independently managed package storage;
-opening the recipient workflow is not proof of delivery.
+At most three UTF-8 logs are retained, each at most 2 MiB (6 MiB total). The
+active log rotates at its size bound; older excess Companion logs are removed,
+never unrelated files or ATAK-managed data packages. Disabling capture closes
+the current file but does not export or delete it. File creation, writes,
+rotation, cleanup and finalization use a single writer worker. Opening ATAK's
+recipient workflow is not proof of delivery.
 
 ### Bonded Location Diagnostics (WEARTAK-165)
 
