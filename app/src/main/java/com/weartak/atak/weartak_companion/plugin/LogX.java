@@ -61,14 +61,7 @@ public final class LogX {
     private static void capture(String level, String tag, String msg, Throwable error) {
         CompanionDiagnosticLogger target = diagnostics;
         if (target == null || !target.isLogging()) return;
-        StringBuilder text = new StringBuilder(CompanionDiagnosticLogger.limit(msg, 2048));
-        if (error != null) {
-            text.append('\n').append(CompanionDiagnosticLogger.limit(error.toString(), 512));
-            StackTraceElement[] frames = error.getStackTrace();
-            for (int i = 0; i < Math.min(frames.length, 12); i++)
-                text.append("\n at ").append(CompanionDiagnosticLogger.limit(frames[i].toString(), 256));
-        }
-        target.record(level, tag, text.toString());
+        target.record(level, tag, msg, error != null);
     }
 
     private static String stamp() {

@@ -2,14 +2,11 @@
 <resources>
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
-    <string name="start_logging">Log</string>
-    <string name="stop_and_send_log">Send</string>
-    <string name="finalizing_log">Finishing...</string>
-    <string name="starting_log">Starting...</string>
-    <string name="start_log_description">Start Companion diagnostic logging</string>
-    <string name="send_log_description">Stop and send Companion diagnostic log</string>
-    <string name="finishing_log_description">Finalizing Companion diagnostic log</string>
-    <string name="log_started">Companion logging started. Logs may contain callsigns, locations and messages. Use Send when finished.</string>
+    <string name="diagnostics_label">Diagnostics</string>
+    <string name="diagnostics_enabled">Diagnostics enabled. Privacy-safe events are stored locally until disabled.</string>
+    <string name="diagnostics_export">Export</string>
+    <string name="diagnostics_export_description">Manually export retained Companion diagnostic logs using ATAK</string>
+    <string name="diagnostics_privacy_note">Local event categories only; message content, identities, credentials, server addresses and coordinates are excluded.</string>
     <string name="log_capture_problem">Companion log: %1$s</string>
     <string name="watch_name_unavailable">Unknown watch</string>
     <string name="watch_bonded_as">Bonded as %1$s</string>

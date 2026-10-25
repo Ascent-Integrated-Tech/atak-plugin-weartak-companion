@@ -8,7 +8,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,7 +17,7 @@ import static org.junit.Assert.*;
 public class CompanionDiagnosticLoggerTest {
     @Rule public TemporaryFolder temp = new TemporaryFolder();
     private static final String METADATA = "Plugin version: test-plugin\nATAK version: test-atak"
-            + "\nDevice model: test-device\nAndroid version: test-android";
+            + "\nAndroid API: 35";
 
     private File start(CompanionDiagnosticLogger logger) throws Exception {
         CountDownLatch done = new CountDownLatch(1);
@@ -57,41 +56,42 @@ public class CompanionDiagnosticLoggerTest {
         return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
     }
 
-    @Test public void optInCaptureIncludesMetadataUtcAndPluginEventsOnly() throws Exception {
+    @Test public void capturePersistsOnlyPrivacySafeEventCategories() throws Exception {
         File directory = new File(temp.getRoot(), "companion-logs");
         CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(() -> directory, error -> fail(error.toString()));
-        boolean enabled = LogX.ENABLED;
         try {
-            LogX.ENABLED = false;
-            LogX.attach(logger);
-            LogX.i("WTK/BleClient", "before-start");
+            logger.record("I", "WTK/BleClient", "SCAN: before-start");
             assertFalse(directory.exists());
             File file = start(logger);
-            LogX.i("WTK/BleClient", "SCAN: started");
-            LogX.i("WTK/BleClient", "CONNECT: requested");
-            LogX.d("WTK/BleCotBridge", "dispatchCot(PLI): dispatched INTERNAL");
-            LogX.w("WTK/BleClient", "DISCONNECT");
-            LogX.e("WTK/Plugin", "failure example", new IOException("bounded stack"));
-            LogX.i("AndroidSystem", "must-not-capture");
+            logger.record("I", "WTK/BleClient", "SCAN: started");
+            logger.record("I", "WTK/BleClient", "CONNECT: requested");
+            logger.record("D", "WTK/BleCotBridge",
+                    "dispatchCot(PLI): dispatched INTERNAL lat=37.4219983 lon=-122.084");
+            logger.record("W", "WTK/BleClient", "DISCONNECT");
+            logger.record("E", "WTK/Plugin", "failure example: bounded stack", true);
+            logger.record("I", "AndroidSystem", "must-not-capture");
             assertEquals(file, stop(logger));
-            LogX.i("WTK/BleClient", "after-stop");
+            logger.record("I", "WTK/BleClient", "SCAN: after-stop");
             String text = read(file);
             assertTrue(text.contains(METADATA));
-            assertTrue(text.matches("(?s).*Export UTC: \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z\\n.*"));
-            assertFalse(text.contains("not sent"));
-            assertTrue(text.contains("SCAN: started"));
-            assertTrue(text.contains("CONNECT: requested"));
-            assertTrue(text.contains("dispatchCot(PLI)"));
-            assertTrue(text.contains("DISCONNECT"));
-            assertTrue(text.contains("IOException: bounded stack"));
-            assertTrue(text.indexOf("SCAN:") < text.indexOf("CONNECT:"));
+            assertTrue(text.matches("(?s).*Capture started UTC: \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z\\n.*"));
+            assertTrue(text.contains("event=transport_scan"));
+            assertTrue(text.contains("event=transport_connect"));
+            assertTrue(text.contains("event=report"));
+            assertTrue(text.contains("event=transport_disconnect"));
+            assertTrue(text.contains("event=failure"));
+            assertTrue(text.indexOf("event=transport_scan") < text.indexOf("event=transport_connect"));
             assertFalse(text.contains("before-start"));
             assertFalse(text.contains("after-stop"));
             assertFalse(text.contains("must-not-capture"));
+            assertFalse(text.contains("SCAN: started"));
+            assertFalse(text.contains("CONNECT: requested"));
+            assertFalse(text.contains("37.4219983"));
+            assertFalse(text.contains("-122.084"));
+            assertFalse(text.contains("failure example"));
+            assertFalse(text.contains("bounded stack"));
             assertTrue(text.contains("Dropped records (queue full): 0"));
         } finally {
-            LogX.detach(logger);
-            LogX.ENABLED = enabled;
             shutdown(logger);
         }
     }
@@ -111,59 +111,43 @@ public class CompanionDiagnosticLoggerTest {
         assertEquals(CompanionDiagnosticLogger.FILE_COUNT, logs.length);
         StringBuilder retained = new StringBuilder();
         for (File file : logs) retained.append(read(file));
-        assertTrue(retained.toString().contains("session-4"));
+        assertTrue(retained.toString().contains("event=transport"));
         assertFalse(retained.toString().contains("session-0"));
-        assertFalse(retained.toString().contains("session-1"));
         assertTrue(unrelated.exists());
     }
 
-    @Test public void productionSizeCapKeepsValidUtf8AndReportsPartialCapture() throws Exception {
+    @Test public void rotatingLogsStayWithinFileAndRetentionBounds() throws Exception {
         AtomicReference<IOException> notice = new AtomicReference<>();
-        CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(temp::getRoot, notice::set);
+        CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(temp::getRoot, notice::set, 4096, 256);
         try {
             start(logger);
-            String large = String.join("", Collections.nCopies(4096, "\u6f22"));
-            for (int i = 0; i < 3000; i++) logger.record("D", "WTK/Test", large);
-            File file = stop(logger);
-            assertEquals(2 * 1024 * 1024, CompanionDiagnosticLogger.FILE_BYTES);
-            assertTrue(file.length() <= CompanionDiagnosticLogger.FILE_BYTES);
-            assertTrue(file.length() > CompanionDiagnosticLogger.FILE_BYTES - 32 * 1024);
-            String text = read(file);
-            assertFalse(text.contains("\ufffd"));
-            assertTrue(text.contains("Size limit reached: true"));
-            assertNotNull(notice.get());
-            assertTrue(notice.get().getMessage().contains("Use Send"));
+            for (int i = 0; i < 1000; i++)
+                logger.record("D", "WTK/Test" + i, "SCAN lat=37.4219983 lon=-122.084");
+            stop(logger);
+            File[] files = logger.logs();
+            assertTrue(files.length <= CompanionDiagnosticLogger.FILE_COUNT);
+            assertTrue(files.length > 1);
+            for (File file : files) {
+                assertTrue(file.length() <= 4096);
+                String text = read(file);
+                assertFalse(text.contains("37.4219983"));
+                assertFalse(text.contains("-122.084"));
+                assertTrue(text.contains("event=transport_scan"));
+            }
+            assertNull(notice.get());
         } finally { shutdown(logger); }
     }
 
-    @Test public void fullQueueDoesNotBlockStopAndDroppedRecordsAreExplicit() throws Exception {
-        CountDownLatch workerBlocked = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(temp::getRoot, error -> {
-            workerBlocked.countDown();
-            try { assertTrue(release.await(5, TimeUnit.SECONDS)); }
-            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-        }, 4096, 2);
+    @Test public void eventQueueIsBoundedAndOverflowIsReported() throws Exception {
+        CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(temp::getRoot,
+                error -> fail(error.toString()), 4096, 2);
         try {
             start(logger);
-            logger.record("D", "WTK/Test", String.join("", Collections.nCopies(4096, "x")));
-            assertTrue(workerBlocked.await(5, TimeUnit.SECONDS));
-            logger.record("I", "WTK/Test", "one");
-            logger.record("I", "WTK/Test", "two");
-            logger.record("I", "WTK/Test", "three");
-            CountDownLatch finished = new CountDownLatch(1);
-            AtomicReference<File> result = new AtomicReference<>();
-            logger.stop((file, error) -> {
-                assertNull(error);
-                result.set(file);
-                finished.countDown();
-            });
-            assertEquals(1, finished.getCount());
-            release.countDown();
-            assertTrue(finished.await(5, TimeUnit.SECONDS));
-            assertTrue(read(result.get()).contains("Dropped records (queue full): 2"));
+            for (int i = 0; i < 1000; i++)
+                logger.record("I", "WTK/Test" + i, "SCAN started");
+            File file = stop(logger);
+            assertTrue(read(file).matches("(?s).*Dropped records \\(queue full\\): [1-9][0-9]*\\n.*"));
         } finally {
-            release.countDown();
             shutdown(logger);
         }
     }
@@ -186,7 +170,7 @@ public class CompanionDiagnosticLoggerTest {
         assertTrue(logger.awaitTermination(5, TimeUnit.SECONDS));
         assertFalse(logger.isLogging());
         assertTrue(read(result.get()).contains("Capture finished UTC:"));
-        assertTrue(read(result.get()).contains("Export UTC: not sent"));
+        assertFalse(read(result.get()).contains("not sent"));
     }
 
     @Test public void startFailureIsReportedAndCanBeRetried() throws Exception {
@@ -209,12 +193,31 @@ public class CompanionDiagnosticLoggerTest {
         } finally { shutdown(logger); }
     }
 
-    @Test public void boundedRecordsDoNotSplitSurrogatePairsAndUseUtc() {
+    @Test public void repeatedCategoriesAreRateLimitedAndUseUtc() throws Exception {
         assertEquals("1970-01-01T00:00:00.000Z", CompanionDiagnosticLogger.utc(0));
-        String longText = String.join("", Collections.nCopies(3000, "\ud83d\ude00"));
-        String bounded = CompanionDiagnosticLogger.limit(longText, 2048);
-        assertTrue(bounded.length() <= 2048);
-        assertTrue(bounded.endsWith(" [truncated]"));
-        assertFalse(new String(bounded.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8).contains("?"));
+        CompanionDiagnosticLogger logger = new CompanionDiagnosticLogger(temp::getRoot,
+                error -> fail(error.toString()));
+        try {
+            start(logger);
+            for (int i = 0; i < 20; i++)
+                logger.record("I", "WTK/BleClient", "SCAN request address=secret");
+            File file = stop(logger);
+            String text = read(file);
+            assertEquals(1, occurrences(text, "event=transport_scan"));
+            assertTrue(text.contains("Rate-limited duplicate events: 19"));
+            assertFalse(text.contains("address=secret"));
+        } finally {
+            shutdown(logger);
+        }
+    }
+
+    private static int occurrences(String text, String target) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = text.indexOf(target, offset)) >= 0) {
+            count++;
+            offset += target.length();
+        }
+        return count;
     }
 }
