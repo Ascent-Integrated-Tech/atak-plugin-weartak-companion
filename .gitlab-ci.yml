@@ -131,6 +131,7 @@ publish_github_rolling_release:
       artifacts: true
   resource_group: weartak-companion-github-rolling-release
   variables:
+    GIT_DEPTH: "0"
     GITHUB_REPOSITORY: Ascent-Integrated-Tech/atak-plugin-weartak-companion
   before_script:
     - |
@@ -144,3 +145,31 @@ publish_github_rolling_release:
     - python3 scripts/publish_github_release.py
   rules:
     - if: '$CI_SERVER_HOST == "git.tak.gov" && $CI_PROJECT_PATH == "aegorsuch/atak-plugin-weartak-companion" && $CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'
+
+publish_github_personal_rolling_release:
+  stage: .post
+  image:
+    name: ${TAK_REGISTRY_HOST}/devsecops/gradle-build-launcher:17-${GRADLE_BUILD_LAUNCHER_TAG}
+    entrypoint: [""]
+  needs:
+    - job: release_build_and_sign
+      artifacts: true
+  resource_group: weartak-companion-github-rolling-release
+  environment:
+    name: github-personal-rolling-release
+  variables:
+    GIT_DEPTH: "0"
+    GITHUB_REPOSITORY: aegorsuch/atak-plugin-weartak-companion
+    GITHUB_PERSONAL_REPOSITORY: aegorsuch/atak-plugin-weartak-companion
+  before_script:
+    - |
+      case "${CI_DEBUG_TRACE:-false}" in
+        true|TRUE|1)
+          echo "ERROR: Disable CI_DEBUG_TRACE before publishing authenticated releases"
+          exit 1
+          ;;
+      esac
+  script:
+    - python3 scripts/publish_github_release.py --personal
+  rules:
+    - if: '$CI_SERVER_HOST == "git.tak.gov" && $CI_PROJECT_PATH == "aegorsuch/atak-plugin-weartak-companion" && $CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true" && $PUBLISH_PERSONAL_GITHUB == "true"'
