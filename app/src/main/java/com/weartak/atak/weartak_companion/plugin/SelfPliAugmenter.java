@@ -33,10 +33,17 @@ final class SelfPliAugmenter {
     private String boundLink;
     private String boundSession;
     private String boundDeviceUid;
+    private java.util.function.Consumer<String> pairedWatch = uid -> { };
 
     SelfPliAugmenter(Host host, Clock clock) {
         this.host = host;
         this.clock = clock;
+    }
+
+    /** Receives the authorized watch UID while its link is current, and null once it is gone. */
+    synchronized void setPairedWatchListener(java.util.function.Consumer<String> listener) {
+        pairedWatch = listener == null ? uid -> { } : listener;
+        pairedWatch.accept(boundDeviceUid);
     }
 
     /** Removes contributions left behind by a previous process before any watch connects. */
@@ -44,6 +51,7 @@ final class SelfPliAugmenter {
         boundLink = boundSession = boundDeviceUid = null;
         state.clear();
         published = null;
+        pairedWatch.accept(null);
         refresh();
     }
 
@@ -87,6 +95,7 @@ final class SelfPliAugmenter {
         }
         boundSession = session;
         boundDeviceUid = deviceUid;
+        pairedWatch.accept(deviceUid);
         refresh();
         return true;
     }
@@ -96,6 +105,7 @@ final class SelfPliAugmenter {
             host.log("Removing watch PPE/physio from phone PLI: " + reason);
         boundLink = boundSession = boundDeviceUid = null;
         state.clear();
+        pairedWatch.accept(null);
         refresh();
     }
 

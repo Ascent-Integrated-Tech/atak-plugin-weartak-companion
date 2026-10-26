@@ -400,6 +400,16 @@ touched. Legacy watch PLI no longer adds a generated "WearTAK PLI" remark, and i
 phone user's ATAK remarks. The legacy untimed `<physio hr>` is used only for older watches that
 have no active SELF_STATUS snapshot.
 
+One marker per person: once a WearOS or Garmin watch has sent an authorized `self_status` snapshot
+on the current Companion link, its `deviceUid` (e.g. `WEAROS_<androidId>`) is treated as part of the
+phone's self marker. Any separate map track with exactly that UID, arriving over Ditto, TAK or
+multicast, is removed from this phone's map while the link stays current. The watch's emergency UID
+(`<deviceUid>-9-1-1`) and all other devices are never suppressed. Suppression ends when the
+watch disconnects, loses trust, or the route or plugin stops; any ghost track that appeared during
+a brief drop is removed again when the watch reconnects and resends `self_status`. Other EUDs
+are not affected by this phone-local filter; the watch must stop publishing its own track
+while Companion is connected.
+
 Optional watch `team` / `role` strings in settings snapshots and identity-only
 `settings_changed` deltas are retained in the existing observed settings snapshot.
 Missing, blank, null or non-string fields do not invent values or erase a known
