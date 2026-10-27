@@ -17,38 +17,40 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
         <TextView
-            android:layout_width="0dp"
-            android:layout_weight="1"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
             android:textStyle="bold"
-            android:textSize="18sp"
-            android:paddingBottom="6dp" />
+            android:textSize="18sp" />
+        <ImageButton
+            android:id="@+id/diagnosticsToggle"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="8dp"
+            android:padding="6dp"
+            android:scaleType="fitCenter"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_log"
+            android:contentDescription="@string/diagnostics_label" />
+        <ImageButton
+            android:id="@+id/diagnosticsExportButton"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:padding="6dp"
+            android:scaleType="fitCenter"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_send_log"
+            android:contentDescription="@string/diagnostics_export_description" />
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
         <Button
             android:id="@+id/purposeButton"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
             android:text="Bond Single Watch"
             android:drawableEnd="@android:drawable/arrow_down_float" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <Switch
-                android:id="@+id/diagnosticsToggle"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:text="@string/diagnostics_label" />
-
-            <Button
-                android:id="@+id/diagnosticsExportButton"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:contentDescription="@string/diagnostics_export_description"
-                android:text="@string/diagnostics_export" />
         </LinearLayout>
 
         <LinearLayout

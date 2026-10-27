@@ -112,9 +112,10 @@ builds receive no new unit fields; their profile-settings transactions are uncha
 
 ### Companion logging (WEARTAK-274)
 
-Turn on **Logging** before reproducing a problem. This opt-in is off by
+Tap the small **log** icon beside the WearTAK Companion title (it turns green while on) before
+reproducing a problem. This opt-in is off by
 default, saved in Companion preferences across ATAK restarts and in-place updates,
-and remains on until explicitly switched off. **Export logs** manually opens ATAK's
+and remains on until tapped off. The small **send** icon next to it manually opens ATAK's
 existing data-package recipient workflow for all retained logs; nothing is sent
 automatically. The files can also be retrieved from ATAK's `companion-logs`
 storage directory when using an authorized local debugging connection.

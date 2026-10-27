@@ -3,6 +3,8 @@
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
     <string name="diagnostics_label">Logging</string>
+    <string name="diagnostics_toggle_off">Logging is off. Tap to start Companion logging</string>
+    <string name="diagnostics_toggle_on">Logging is on. Tap to stop Companion logging</string>
     <string name="diagnostics_enabled">Logging is on. Privacy-safe events are stored locally until you turn it off.</string>
     <string name="diagnostics_export">Export logs</string>
     <string name="diagnostics_export_description">Manually export saved Companion logs using ATAK</string>

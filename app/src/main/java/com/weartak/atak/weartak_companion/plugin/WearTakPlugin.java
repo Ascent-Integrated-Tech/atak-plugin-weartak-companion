@@ -18,11 +18,12 @@ import android.util.Base64;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.graphics.Color;
 import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.Switch;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.widget.Toast;
@@ -81,8 +82,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile Boolean lastSettingsApplyResult = null;
     private CompanionDiagnosticLogger diagnosticLogger;
-    private Switch diagnosticsToggle;
-    private Button diagnosticsExportButton;
+    private ImageButton diagnosticsToggle;
+    private ImageButton diagnosticsExportButton;
     private boolean identityObserverActive;
     private List<String> lastSentPhoneIdentity;
     private final Runnable liveIdentityUpdate = this::syncLivePhoneIdentity;
@@ -1725,10 +1726,20 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void updateDiagnosticsControls() {
         if (diagnosticsToggle == null) return;
-        diagnosticsToggle.setEnabled(diagnosticLogger != null &&
-                (diagnosticLogger.isLogging() || !diagnosticLogger.isBusy()));
-        if (diagnosticsExportButton != null)
-            diagnosticsExportButton.setEnabled(diagnosticLogger != null && !diagnosticLogger.isBusy());
+        boolean enabled = systemBondedPreferences().getBoolean(KEY_DIAGNOSTICS_ENABLED, false);
+        boolean toggleUsable = diagnosticLogger != null &&
+                (diagnosticLogger.isLogging() || !diagnosticLogger.isBusy());
+        diagnosticsToggle.setEnabled(toggleUsable);
+        diagnosticsToggle.setActivated(enabled);
+        diagnosticsToggle.setColorFilter(enabled ? Color.rgb(0x4C, 0xAF, 0x50) : Color.WHITE);
+        diagnosticsToggle.setAlpha(toggleUsable ? 1f : 0.4f);
+        diagnosticsToggle.setContentDescription(pluginContext.getString(enabled
+                ? R.string.diagnostics_toggle_on : R.string.diagnostics_toggle_off));
+        if (diagnosticsExportButton != null) {
+            boolean exportUsable = diagnosticLogger != null && !diagnosticLogger.isBusy();
+            diagnosticsExportButton.setEnabled(exportUsable);
+            diagnosticsExportButton.setAlpha(exportUsable ? 1f : 0.4f);
+        }
     }
 
     private void showLogError(Exception error) {
@@ -2291,10 +2302,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             // IMPORTANT: store paneView as a FIELD (not a local)
             paneView = PluginLayoutInflater.inflate(pluginContext, R.layout.main_layout, null);
             diagnosticsToggle = paneView.findViewById(R.id.diagnosticsToggle);
-            diagnosticsToggle.setChecked(systemBondedPreferences()
-                    .getBoolean(KEY_DIAGNOSTICS_ENABLED, false));
-            diagnosticsToggle.setOnCheckedChangeListener((button, enabled) ->
-                    onDiagnosticsToggled(enabled));
+            diagnosticsToggle.setOnClickListener(v -> onDiagnosticsToggled(
+                    !systemBondedPreferences().getBoolean(KEY_DIAGNOSTICS_ENABLED, false)));
             diagnosticsExportButton = paneView.findViewById(R.id.diagnosticsExportButton);
             diagnosticsExportButton.setOnClickListener(v -> exportDiagnostics());
             updateDiagnosticsControls();
