@@ -5,10 +5,15 @@
     android:padding="8dp">
 
     <!-- DEVICE SCREEN -->
+    <ScrollView
+        android:id="@+id/deviceScreenScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
     <LinearLayout
         android:id="@+id/deviceScreenRoot"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:orientation="vertical">
 
         <LinearLayout
@@ -17,41 +22,45 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:text="@string/app_name"
             android:textStyle="bold"
-            android:textSize="18sp" />
+            android:textSize="16sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
         <ImageButton
             android:id="@+id/diagnosticsToggle"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginStart="8dp"
-            android:padding="6dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="16dp"
             android:scaleType="fitCenter"
             android:background="@android:color/transparent"
             android:src="@drawable/ic_log"
             android:contentDescription="@string/diagnostics_label" />
         <ImageButton
             android:id="@+id/diagnosticsExportButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:padding="6dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="16dp"
             android:scaleType="fitCenter"
             android:background="@android:color/transparent"
             android:src="@drawable/ic_send_log"
             android:contentDescription="@string/diagnostics_export_description" />
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
+        </LinearLayout>
         <Button
             android:id="@+id/purposeButton"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:minWidth="0dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textSize="13sp"
+            android:textAllCaps="false"
             android:text="Bond Single Watch"
             android:drawableEnd="@android:drawable/arrow_down_float" />
-        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -64,6 +73,7 @@
                 android:layout_height="wrap_content"
                 android:text="Pairing Mode:"
                 android:textStyle="bold"
+                android:textSize="12sp"
                 android:layout_marginEnd="8dp" />
 
             <Button
@@ -71,22 +81,25 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:minWidth="0dp"
+                android:minHeight="48dp"
+                android:textSize="13sp"
+                android:textAllCaps="false"
                 android:text="BLE"
                 android:drawableEnd="@android:drawable/arrow_down_float" />
         </LinearLayout>
 
-        <ScrollView
+        <FrameLayout
             android:id="@+id/gatewayScroll"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="wrap_content"
             android:visibility="gone">
             <LinearLayout
                 android:id="@+id/gatewayPanel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
-        </ScrollView>
+        </FrameLayout>
         <LinearLayout
             android:id="@+id/bleStatusRow"
             android:layout_width="match_parent"
@@ -97,8 +110,10 @@
         <TextView
             android:id="@+id/connection_status"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
             android:layout_weight="1"
+            android:textSize="12sp"
             android:gravity="center_vertical"
             android:text="NOT CONNECTED"
             android:paddingLeft="10dp"
@@ -111,8 +126,13 @@
 
         <Button
             android:id="@+id/scanButton"
-            android:layout_width="112dp"
-            android:layout_height="48dp"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:minHeight="48dp"
+            android:textSize="12sp"
+            android:textAllCaps="false"
             android:background="@drawable/btn_gray"
             android:textColor="@android:color/white"
             android:text="Scan" />
@@ -156,8 +176,10 @@
                 <TextView
                     android:id="@+id/systemBondedWatchStatus"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
                     android:layout_weight="1"
+                    android:textSize="12sp"
                     android:gravity="center_vertical"
                     android:text="NOT CONNECTED"
                     android:paddingLeft="10dp"
@@ -170,8 +192,13 @@
 
                 <Button
                     android:id="@+id/systemBondedConnectButton"
-                    android:layout_width="112dp"
-                    android:layout_height="48dp"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:minHeight="48dp"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"
                     android:background="@drawable/btn_gray"
                     android:textColor="@android:color/white"
                     android:text="Connect" />
@@ -191,15 +218,13 @@
                 android:id="@+id/systemBondedIdentity"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:padding="12dp"
-                android:textStyle="bold"
-                android:textSize="14sp" />
+                android:padding="8dp"
+                android:textSize="13sp" />
         </LinearLayout>
         <LinearLayout
             android:id="@+id/garminPanel"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="wrap_content"
             android:orientation="vertical">
         <LinearLayout
             android:layout_width="match_parent"
@@ -210,8 +235,10 @@
             <TextView
                 android:id="@+id/garminConnectionBadge"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
                 android:layout_weight="1"
+                android:textSize="12sp"
                 android:gravity="center_vertical"
                 android:text="OFF"
                 android:textColor="@android:color/white"
@@ -224,8 +251,13 @@
 
             <Button
                 android:id="@+id/garminToggleButton"
-                android:layout_width="112dp"
-                android:layout_height="48dp"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:minHeight="48dp"
+                android:textSize="12sp"
+                android:textAllCaps="false"
                 android:background="@drawable/btn_gray"
                 android:textColor="@android:color/white"
                 android:text="Retry" />
@@ -242,16 +274,11 @@
                 android:enabled="false" />
         </LinearLayout>
 
-        <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
             <LinearLayout
                 android:id="@+id/garminIdentityRows"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
-        </ScrollView>
 
         <TextView
             android:id="@+id/garminConnectionStatus"
@@ -274,11 +301,12 @@
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/deviceList"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:paddingTop="8dp" />
+            android:layout_height="wrap_content"
+            android:nestedScrollingEnabled="false"
+            android:paddingTop="4dp" />
 
     </LinearLayout>
+    </ScrollView>
 
     <!-- ================= SETTINGS SCREEN (SCROLLABLE) ================= -->
     <ScrollView

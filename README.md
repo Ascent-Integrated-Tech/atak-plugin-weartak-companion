@@ -112,6 +112,11 @@ builds receive no new unit fields; their profile-settings transactions are uncha
 
 ### Companion logging (WEARTAK-274)
 
+The device pane scrolls as a whole in short portrait/landscape ATAK panes. The
+compact title/log/send header sits above a full-width purpose selector; watch
+identity text wraps above the action buttons rather than competing for width.
+Log/send glyphs are 16dp inside 48dp touch targets.
+
 Tap the small **log** icon beside the WearTAK Companion title (it turns green while on) before
 reproducing a problem. This opt-in is off by
 default, saved in Companion preferences across ATAK restarts and in-place updates,
