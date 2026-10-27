@@ -72,6 +72,18 @@ public class SelfPliAugmenterTest {
         assertEquals("MOPP4", fake.remarks);
     }
 
+    @Test public void pairedWatchUidFollowsAuthorizedSnapshotsAndClearsOnDisconnect() throws Exception {
+        Fake fake = new Fake();
+        SelfPliAugmenter augmenter = start(fake);
+        java.util.List<String> paired = new java.util.ArrayList<>();
+        augmenter.setPairedWatchListener(paired::add);
+        assertTrue(augmenter.accept("wearos:1", snapshot("s1", 0, "MOPP 2", null, 0)));
+        augmenter.bind("wearos:2", null, null);
+        assertTrue(augmenter.accept("wearos:2", snapshot("s2", 0, "MOPP 1", null, 0)));
+        augmenter.clear("watch disconnected");
+        assertEquals(java.util.Arrays.asList(null, "WATCH-UID", null, "WATCH-UID", null), paired);
+    }
+
     @Test public void disconnectRemovesOnlyWatchContributions() throws Exception {
         Fake fake = new Fake();
         fake.remarks = "line one\nline two";

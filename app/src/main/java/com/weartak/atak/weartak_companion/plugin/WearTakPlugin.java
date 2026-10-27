@@ -193,6 +193,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             });
     private BleCotBridge bleCotBridge;
     private SelfPliAugmenter selfPli;
+    private final PairedWatchTrackSuppressor pairedWatchTracks = new PairedWatchTrackSuppressor();
     private volatile BloodhoundBridge bloodhoundBridge;
     private final PhoneMarkerRelay phoneMarkerPolicy = new PhoneMarkerRelay();
     private PhoneMarkerMapRelay phoneMarkerRelay;
@@ -615,6 +616,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             selfPli = new SelfPliAugmenter(selfPliHost, selfPliHost);
         }
         selfPli.start();
+        pairedWatchTracks.start(identityMap);
+        selfPli.setPairedWatchListener(pairedWatchTracks::setPairedWatch);
         bleCotBridge.setSelfPliAugmenter(selfPli);
         SharedPreferences prefs = systemBondedPreferences();
         setupPurpose = prefs.getBoolean("setup_purpose", false);
@@ -1602,6 +1605,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             configureWatchChatEchoSuppression(false);
             connectionModes.stop();
             if (selfPli != null) selfPli.clear("plugin stopped");
+            pairedWatchTracks.stop();
             if (diagnosticLogger != null) {
                 LogX.detach(diagnosticLogger);
                 diagnosticLogger.shutdown();
