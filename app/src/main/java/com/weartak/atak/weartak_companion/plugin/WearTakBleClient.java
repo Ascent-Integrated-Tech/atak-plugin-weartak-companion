@@ -90,6 +90,8 @@ public class WearTakBleClient {
     private static final String KEY_PREFERRED_ADDRESS = "preferred_address"; // saved when connected
     private volatile DiscoveredDevice pendingBondDevice;
     private volatile String pendingBondRecoveryName;
+    private long pendingBondStartedAt = -1;
+    private BondFailureTracker bondFailures = new BondFailureTracker();
     private volatile boolean bondReceiverRegistered = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -208,6 +210,8 @@ public class WearTakBleClient {
         default void onBluetoothStateChanged(boolean available) { }
         /** Non-error progress, e.g. an automatic retry of a connect whose link never came up. */
         default void onConnectionProgress(String message) { }
+        /** Null clears instructions after an explicit pairing cancellation. */
+        default void onPairingRecoveryChanged(BlePairingRecovery recovery) { }
     }
 
     private final AtomicReference<JsonListener> jsonListener = new AtomicReference<>(null);
@@ -244,6 +248,12 @@ public class WearTakBleClient {
     WearTakBleClient(Context context, StatusListener statusListener, String peerAddress) {
         this(context, statusListener, GatewayPolicy.pairingPreferences(peerAddress),
                 GatewayPolicy.retryPreferences(peerAddress), true);
+    }
+
+    WearTakBleClient(Context context, StatusListener statusListener, String peerAddress,
+                     BondFailureTracker bondFailures) {
+        this(context, statusListener, peerAddress);
+        this.bondFailures = bondFailures;
     }
 
     private WearTakBleClient(Context context, StatusListener statusListener,
@@ -568,6 +578,7 @@ public class WearTakBleClient {
         discovered.clear();
         scanLastSeen.clear();
         pendingBondDevice = null;
+        pendingBondStartedAt = -1;
         if (reason == null || !reason.startsWith("bond_recovery ")) {
             pendingBondRecoveryName = null;
         }
@@ -859,9 +870,44 @@ public class WearTakBleClient {
         reconnect.disarm();
         if (automaticReconnectAllowed) reconnectPreference().disarm();
         cancelConnectRetry();
+        if (allowBondCreation && device != null) {
+            BondFailureTracker.Failure blocked = bondFailures.blocked(pairingIdentity(device));
+            if (blocked != null) {
+                resetSession("pairing_rejected_blocked");
+                notifyPairingRejected(device, blocked);
+                handleTrustLoss(device.address, "likely_stale_bond",
+                        "Pairing retries stopped. Clear the old pairing on both devices, then tap Retry pairing.");
+                return;
+            }
+        }
         // Samsung Wearable (allowBondCreation=false) keeps its own owner-driven recovery.
         if (allowBondCreation && device != null && device.address != null) connectRetryDevice = device;
         connectToSelectedDeviceInternal(device, allowBondCreation);
+    }
+
+    synchronized void retryPairing(DiscoveredDevice device) {
+        bondFailures.clear(pairingIdentity(device));
+        resetSession("user pairing retry");
+        connectToSelectedDevice(device);
+    }
+
+    static String pairingIdentity(DiscoveredDevice device) {
+        return BondFailureTracker.identity(device.advertisedCallsign, device.advertisedName, device.name);
+    }
+
+    private void notifyPairingRejected(DiscoveredDevice device, BondFailureTracker.Failure failure) {
+        String localName = null;
+        try {
+            if (bluetoothAdapter != null && hasConnectPermission()) localName = bluetoothAdapter.getName();
+        } catch (SecurityException e) {
+            logW("Bluetooth permission denied while reading local pairing name");
+        }
+        if (localName == null || localName.trim().isEmpty()) {
+            logW("Local Bluetooth name unavailable for pairing recovery guidance");
+            localName = baseContext.getString(R.string.pairing_this_device);
+        }
+        JsonListener listener = jsonListener.get();
+        if (listener != null) listener.onPairingRecoveryChanged(new BlePairingRecovery(device, failure, localName));
     }
 
     private synchronized void cancelConnectRetry() {
@@ -950,6 +996,7 @@ public class WearTakBleClient {
                 return;
             }
             pendingBondDevice = device;
+            pendingBondStartedAt = android.os.SystemClock.elapsedRealtime();
             boolean bondStarted;
             try {
                 bondStarted = invokeLeBond(remote);
@@ -1118,6 +1165,7 @@ public class WearTakBleClient {
     private synchronized boolean scheduleBondRecoveryScan(DiscoveredDevice pending) {
         if (gatewayOnly) return false;
         if (pending == null || pending.address == null) return false;
+        if (bondFailures.blocked(pairingIdentity(pending)) != null) return false;
 
         String recoveryName = normalizeWearTakName(pending.name);
         if (recoveryName == null) return false;
@@ -1446,7 +1494,9 @@ public class WearTakBleClient {
             boolean pendingMatch = pending != null && pending.address != null
                     && pending.address.equals(address);
             if (bondState == BluetoothDevice.BOND_BONDED && pendingMatch) {
+                bondFailures.clear(pairingIdentity(pending));
                 pendingBondDevice = null;
+                pendingBondStartedAt = -1;
                 pendingBondRecoveryName = null;
                 final long token = sessionGeneration;
                 main.post(() -> {
@@ -1460,11 +1510,28 @@ public class WearTakBleClient {
             }
 
             if (pendingMatch && prevBondState == BluetoothDevice.BOND_BONDING) {
-                if (scheduleBondRecoveryScan(pending)) {
+                int reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1);
+                long now = android.os.SystemClock.elapsedRealtime();
+                BondFailureTracker.Failure failure = bondFailures.rejected(pairingIdentity(pending),
+                        pendingBondStartedAt < 0 ? -1 : now - pendingBondStartedAt, reason, now);
+                pendingBondStartedAt = -1;
+                logW("BLE pairing rejected: reason=" + reason + ", likelyStaleBond="
+                        + (failure != null && failure.likelyStale) + ", failures="
+                        + (failure == null ? 0 : failure.count) + ", retriesStopped="
+                        + (failure != null && failure.blocked));
+                if (failure != null) notifyPairingRejected(pending, failure);
+                else {
+                    JsonListener listener = jsonListener.get();
+                    if (listener != null) listener.onPairingRecoveryChanged(null);
+                }
+                if (failure != null && !failure.blocked && scheduleBondRecoveryScan(pending)) {
                     return;
                 }
                 pendingBondRecoveryName = null;
-                handleTrustLoss(address, "bond_cancelled", "BLE bond failed or was cancelled");
+                handleTrustLoss(address, failure != null && failure.likelyStale
+                                ? "likely_stale_bond" : "bond_cancelled",
+                        failure == null ? "BLE pairing cancelled"
+                                : "BLE pairing rejected (reason " + reason + "). See pairing recovery instructions.");
                 return;
             }
 

@@ -23,6 +23,7 @@ final class MultiwatchGateway {
     private final BleCotBridge bridge;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final GatewayPolicy policy = new GatewayPolicy();
+    private final BondFailureTracker bondFailures = new BondFailureTracker();
     private final SharedPreferences prefs;
     private final Map<String, Peer> peers = new LinkedHashMap<>();
     private final Map<String, WearTakBleClient.DiscoveredDevice> discoveries = new LinkedHashMap<>();
@@ -54,6 +55,7 @@ final class MultiwatchGateway {
         String uid, callsign;
         String status = "NOT CONNECTED";
         String error;
+        BlePairingRecovery pairingRecovery;
         boolean paused;
         boolean negotiated;
         String protocolSession;
@@ -85,7 +87,7 @@ final class MultiwatchGateway {
         for (String address : new LinkedHashSet<>(prefs.getStringSet("admitted", new LinkedHashSet<>()))) {
             if (peers.size() >= GatewayPolicy.CAP) break;
             Peer peer = new Peer(new WearTakBleClient.DiscoveredDevice(
-                    null, address, 0));
+                    prefs.getString("name_" + address, null), address, 0));
             peer.uid = prefs.getString("uid_" + address, null);
             peer.callsign = prefs.getString("callsign_" + address, null);
             peer.team = prefs.getString("team_" + address, null);
@@ -182,7 +184,7 @@ final class MultiwatchGateway {
         peer.status = manual ? "Connecting…" : "Reconnecting bonded peer…";
         final long owner = token;
         final long session = peer.session;
-        WearTakBleClient client = new WearTakBleClient(context, null, peer.device.address);
+        WearTakBleClient client = new WearTakBleClient(context, null, peer.device.address, bondFailures);
         peer.client = client;
         client.setStatusListener(connected -> onMain(() -> {
             if (!policy.current(owner, peer.device.address, session) || !current(peer)) return;
@@ -206,6 +208,7 @@ final class MultiwatchGateway {
                 if (!valid()) return;
                 peer.status = "Negotiating…";
                 peer.error = null;
+                peer.pairingRecovery = null;
                 peer.negotiated = false;
                 peer.protocolSession = java.util.UUID.randomUUID().toString();
                 peer.bleSession = client.getReadySession();
@@ -306,6 +309,11 @@ final class MultiwatchGateway {
                 });
             }
             @Override public void onPaired(String uid, String callsign) { }
+            @Override public void onPairingRecoveryChanged(BlePairingRecovery recovery) { onMain(() -> {
+                if (!valid()) return;
+                peer.pairingRecovery = recovery;
+                render();
+            }); }
             @Override public void onError(String message) { onMain(() -> {
                 if (!valid()) return;
                 peer.error = "BLE error: " + message;
@@ -315,8 +323,9 @@ final class MultiwatchGateway {
             @Override public void onTrustLost(String address, String reason) { onMain(() -> {
                 if (!valid()) return;
                 pause(peer);
-                peer.error = "Trust lost: " + reason + ". Connect again to pair.";
-                LogX.w(TAG, peer.device.address + ": " + peer.error);
+                peer.error = peer.pairingRecovery == null
+                        ? "Trust lost: " + reason + ". Connect again to pair." : null;
+                LogX.w(TAG, peer.device.address + ": Trust lost: " + reason);
                 render();
             }); }
         });
@@ -501,6 +510,19 @@ final class MultiwatchGateway {
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
             WearTakPlugin.styleConnectionStatus(badge);
             panel.addView(badge);
+            if (peer.pairingRecovery != null) {
+                LinearLayout recovery = new LinearLayout(context);
+                recovery.setOrientation(LinearLayout.VERTICAL);
+                panel.addView(recovery);
+                peer.pairingRecovery.show(recovery, () -> {
+                    bondFailures.clear(WearTakBleClient.pairingIdentity(peer.device));
+                    peer.pairingRecovery = null;
+                    peer.error = null;
+                    pause(peer);
+                    activate(peer, true);
+                    render();
+                });
+            }
             LinearLayout actions = new LinearLayout(context);
             actions.setGravity(android.view.Gravity.CENTER_VERTICAL);
             panel.addView(actions);
@@ -508,6 +530,7 @@ final class MultiwatchGateway {
                 if (peer.paused) activate(peer, true); else pause(peer);
                 render();
             });
+            connect.setEnabled(peer.pairingRecovery == null);
             LinearLayout.LayoutParams connectSize = new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
             connectSize.setMargins(0, 0, dp(8), 0);
