@@ -19,6 +19,7 @@ field_report_regressions:
       main=app/src/main/java/com/weartak/atak/weartak_companion/plugin
       tests=app/src/test/java/com/weartak/atak/weartak_companion/plugin
       javac -cp '.regression-libs/*' -d .regression-classes \
+        "$main/BondFailureTracker.java" "$tests/BondFailureTrackerTest.java" \
         "$main/PhoneFixValidator.java" "$main/PhonePosition.java" \
         "$main/PhonePositionActions.java" "$main/WatchMessageIds.java" \
         "$main/CompanionDiagnosticLogger.java" \
@@ -47,6 +48,7 @@ field_report_regressions:
         "$tests/SourceCotTimingTest.java" \
         "$tests/GarminEntityAdapterTest.java" "$tests/GarminEntityForwarderTest.java"
       java -cp '.regression-classes:.regression-libs/*' org.junit.runner.JUnitCore \
+        com.weartak.atak.weartak_companion.plugin.BondFailureTrackerTest \
         com.weartak.atak.weartak_companion.plugin.AtakUnitPreferencesTest \
         com.weartak.atak.weartak_companion.plugin.SettingsPayloadBuilderTest \
         com.weartak.atak.weartak_companion.plugin.PhonePositionActionsTest \

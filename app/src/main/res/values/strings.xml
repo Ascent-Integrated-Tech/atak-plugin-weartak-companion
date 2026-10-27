@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="pairing_this_device">this phone/tablet (check its Bluetooth name in Android Settings)</string>
+    <string name="pairing_stale_bond_guidance">Pairing rejected - the watch may still remember an old pairing. Automatic attempts are limited to two.\n\nOn the watch: Settings > Connections > Bluetooth > forget \"%1$s\".\n\nOn this device: remove \"%2$s\" (%3$s) from the Bluetooth list if present, including any old entry for that watch. Then tap Retry. If the watch address has changed, scan and select it again.</string>
+    <string name="pairing_rejected_guidance">Pairing rejected. Check for a pairing prompt on both devices. If it keeps failing, on the watch forget \"%1$s\", then remove \"%2$s\" (%3$s) from this device\'s Bluetooth list if present. Tap Retry after correcting the pairing.</string>
+    <string name="pairing_retry">Retry pairing</string>
+    <string name="pairing_bluetooth_settings">Open Bluetooth settings</string>
+    <string name="pairing_settings_unavailable">Cannot open Bluetooth settings. Open Android Settings > Connections > Bluetooth manually.</string>
     <!-- App -->
     <string name="app_name">WearTAK Companion</string>
     <string name="diagnostics_label">Logging</string>

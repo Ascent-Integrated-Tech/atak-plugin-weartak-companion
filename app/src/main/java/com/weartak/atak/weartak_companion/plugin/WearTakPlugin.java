@@ -230,6 +230,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     // Screen roots
     private View deviceScreenRoot;
+    private BlePairingRecovery pairingRecovery;
     private View settingsScreenRoot;
 
     // Device screen
@@ -549,6 +550,10 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     }
 
     private void connectToDevice(WearTakBleClient.DiscoveredDevice device) {
+        connectToDevice(device, false);
+    }
+
+    private void connectToDevice(WearTakBleClient.DiscoveredDevice device, boolean retryRejectedPairing) {
         if (device == null || bleClient == null
                 || connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) return;
 
@@ -556,12 +561,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         clearSessionSettings();
         ++scanSessionCount;
         selectedDevice = device;
+        pairingRecovery = null;
+        updatePairingRecoveryUi();
         bleClient.resetSession("UI connect " + device.address);
         currentConnectedAddress = device.address;
 
         if (deviceAdapter != null) deviceAdapter.setConnecting(device.address);
         setConnectionStatus("Connecting WearTAK watch...");
-        bleClient.connectToSelectedDevice(device);
+        if (retryRejectedPairing) bleClient.retryPairing(device);
+        else bleClient.connectToSelectedDevice(device);
     }
 
     // ------------------ Plugin lifecycle ------------------
@@ -759,6 +767,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
                     if (!bleClient.isConnected()) return;
+                    pairingRecovery = null;
+                    updatePairingRecoveryUi();
                     phoneSettingsPushedThisConnection = false;
                     settingsModeLoadedThisConnection = false;
                     if (selfPli != null && !gatewayPurpose)
@@ -948,6 +958,15 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
             }
 
             @Override
+            public void onPairingRecoveryChanged(BlePairingRecovery recovery) {
+                runOnMain(() -> {
+                    if (!connectionModes.isCurrent(token)) return;
+                    pairingRecovery = recovery;
+                    updatePairingRecoveryUi();
+                });
+            }
+
+            @Override
             public void onConnectionProgress(String message) {
                 runOnMain(() -> {
                     if (!connectionModes.isCurrent(token)) return;
@@ -1060,6 +1079,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
     private void updateConnectionModeUi() {
         ConnectionModeController.Mode mode = connectionModes.getMode();
         if (connectionModeButton == null) return;
+        updatePairingRecoveryUi();
         connectionModeButton.setText(mode == ConnectionModeController.Mode.TRADITIONAL
                 ? "BLE" : mode == ConnectionModeController.Mode.GARMIN ? "Garmin Connect" : "Samsung Wearable");
         connectionModeButton.setEnabled(!connectionModes.isPairingLocked());
@@ -1220,6 +1240,19 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
         connectionStatusTV.setText("CONNECTED".equals(status) ? singleWatchConnectionStatus() : status);
         styleConnectionStatus(connectionStatusTV);
         refreshIdentityStatus();
+    }
+
+    private void updatePairingRecoveryUi() {
+        if (paneView == null) return;
+        LinearLayout panel = paneView.findViewById(R.id.pairingRecoveryPanel);
+        if (panel == null) return;
+        if (pairingRecovery == null || gatewayPurpose
+                || connectionModes.getMode() != ConnectionModeController.Mode.TRADITIONAL) {
+            panel.setVisibility(View.GONE);
+            return;
+        }
+        BlePairingRecovery recovery = pairingRecovery;
+        recovery.show(panel, () -> connectToDevice(recovery.device, true));
     }
 
     private String panelStatusText() {

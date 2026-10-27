@@ -10,6 +10,8 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import org.junit.Before;
@@ -56,6 +58,7 @@ public class BleConnectRetryTest {
     private final List<String> errors = new ArrayList<>();
     private final List<String> progress = new ArrayList<>();
     private final List<String> trustLost = new ArrayList<>();
+    private final List<BlePairingRecovery> pairingFailures = new ArrayList<>();
     private final List<BluetoothGatt> gatts = new ArrayList<>();
     private int readies;
     private int bond = BluetoothDevice.BOND_BONDED;
@@ -106,6 +109,7 @@ public class BleConnectRetryTest {
                 });
         adapter = mock(BluetoothAdapter.class, withSettings().mockMaker(MockMakers.INLINE));
         when(adapter.isEnabled()).thenReturn(true);
+        when(adapter.getName()).thenReturn("Alex's phone");
         when(adapter.getRemoteDevice(anyString())).thenReturn(device);
 
         set("appContext", context);
@@ -122,6 +126,97 @@ public class BleConnectRetryTest {
         peer.accepted = true;
         assertTrue(WearTakBleClient.invokeLeBond(peer));
         assertEquals(BluetoothDevice.TRANSPORT_LE, peer.transport);
+    }
+
+    @Test public void rapidBondRejectionsStopAfterTwoEvenWhenAdvertisingAddressChanges() throws Exception {
+        rejectBond(WATCH, 104);
+        assertEquals(1, pairingFailures.size());
+        assertTrue(pairingFailures.get(0).failure.likelyStale);
+        assertFalse(pairingFailures.get(0).failure.blocked);
+        rejectBond("48:E3:6B:A8:BE:CE", 105);
+        assertEquals(2, pairingFailures.size());
+        assertTrue(pairingFailures.get(1).failure.blocked);
+        assertEquals(105, pairingFailures.get(1).failure.reason);
+        userConnect();
+        assertTrue(gatts.isEmpty());
+        assertEquals(3, pairingFailures.size());
+        assertTrue(pairingFailures.get(2).failure.blocked);
+        assertEquals("likely_stale_bond", trustLost.get(trustLost.size() - 1));
+    }
+
+    @Test public void explicitBondCancellationDoesNotAttemptRecoveryOrShowStaleGuidance() throws Exception {
+        rejectBond(WATCH, 3);
+        assertTrue(pairingFailures.isEmpty());
+        assertEquals(Collections.singletonList("bond_cancelled"), trustLost);
+        verify(adapter, never()).getBluetoothLeScanner();
+    }
+
+    @Test public void gatewayReplacementClientSharesRejectionBudgetAcrossRotatingAddresses() throws Exception {
+        rejectBond(WATCH, 104);
+        BondFailureTracker shared = (BondFailureTracker) get("bondFailures");
+        Handler main = (Handler) get("main");
+        Context context = (Context) get("appContext");
+        String rotated = "48:E3:6B:A8:BE:CE";
+        client = new WearTakBleClient(context, status::add, rotated, shared);
+        set("appContext", context);
+        set("main", main);
+        set("bluetoothAdapter", adapter);
+        set("started", true);
+        client.setJsonListener(new Listener());
+        rejectBond(rotated, 105);
+        assertTrue(pairingFailures.get(1).failure.blocked);
+        client.connectToSelectedDevice(new WearTakBleClient.DiscoveredDevice("w", rotated, -50));
+        settle();
+        assertTrue(gatts.isEmpty());
+        verify(adapter, never()).getBluetoothLeScanner();
+    }
+
+    @Test public void explicitCancellationClearsPreviousRecoveryGuidance() throws Exception {
+        rejectBond(WATCH, 104);
+        assertEquals(1, pairingFailures.size());
+        rejectBond(WATCH, 3);
+        assertTrue(pairingFailures.isEmpty());
+    }
+
+    @Test public void unknownReasonStillClassifiesRapidFailureAndExplicitRetryRestoresConnect() throws Exception {
+        rejectBond(WATCH, -1);
+        rejectBond(WATCH, -1);
+        assertTrue(pairingFailures.get(1).failure.blocked);
+        client.retryPairing(new WearTakBleClient.DiscoveredDevice("w", WATCH, -50));
+        settle();
+        assertEquals(1, gatts.size()); // Existing Android bond can now be reused.
+    }
+
+    @Test public void successfulBondClearsRejectionBudget() throws Exception {
+        rejectBond(WATCH, 104);
+        WearTakBleClient.DiscoveredDevice selected =
+                new WearTakBleClient.DiscoveredDevice("w", WATCH, -50);
+        set("pendingBondDevice", selected);
+        broadcastBond(WATCH, BluetoothDevice.BOND_BONDED, -1);
+        settle();
+        rejectBond(WATCH, 104);
+        assertEquals(1, pairingFailures.get(pairingFailures.size() - 1).failure.count);
+    }
+
+    private void rejectBond(String address, int reason) throws Exception {
+        set("pendingBondDevice", new WearTakBleClient.DiscoveredDevice("w", address, -50));
+        set("pendingBondStartedAt", 0L);
+        set("pendingBondRecoveryName", "w"); // This test drives the terminal recovery attempt.
+        broadcastBond(address, BluetoothDevice.BOND_NONE, reason);
+        drain();
+    }
+
+    private void broadcastBond(String address, int state, int reason) throws Exception {
+        BluetoothDevice peer = mock(BluetoothDevice.class);
+        when(peer.getAddress()).thenReturn(address);
+        Intent intent = mock(Intent.class);
+        when(intent.getAction()).thenReturn(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        when(intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)).thenReturn(peer);
+        when(intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)).thenReturn(state);
+        when(intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE))
+                .thenReturn(BluetoothDevice.BOND_BONDING);
+        when(intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)).thenReturn(reason);
+        ((BroadcastReceiver) get("bondStateReceiver")).onReceive(null, intent);
     }
 
     public static final class RejectedLeBondApi {
@@ -431,6 +526,10 @@ public class BleConnectRetryTest {
         @Override public void onPaired(String deviceId, String callsign) { }
         @Override public void onError(String msg) { errors.add(msg); }
         @Override public void onTrustLost(String deviceAddress, String reason) { trustLost.add(reason); }
+        @Override public void onPairingRecoveryChanged(BlePairingRecovery recovery) {
+            if (recovery == null) pairingFailures.clear();
+            else pairingFailures.add(recovery);
+        }
         // No @Override so this harness also compiles against the pre-retry baseline.
         public void onConnectionProgress(String message) { progress.add(message); }
     }

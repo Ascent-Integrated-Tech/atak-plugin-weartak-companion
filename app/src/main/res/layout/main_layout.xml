@@ -149,6 +149,14 @@
             android:enabled="false" />
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/pairingRecoveryPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/locationDiagnosticsStatus"
             android:layout_width="match_parent"

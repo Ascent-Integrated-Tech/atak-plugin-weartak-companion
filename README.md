@@ -110,6 +110,25 @@ The status adds `unitPrefsVersion: 1` and the same `unitPrefs` dictionary, retai
 all negotiated capabilities and its relay session on live updates. Older Garmin
 builds receive no new unit fields; their profile-settings transactions are unchanged.
 
+### BLE pairing recovery
+
+Rapid BLE pairing rejection (within five seconds), exposed LE authentication
+reasons 104/105, or two uncancelled failures within two minutes are treated as a
+likely stale bond. After two failures, further attempts for that advertising
+identity are stopped until **Retry pairing** is tapped or a bond succeeds.
+The single-watch client's one recovery scan uses the same budget; gateway clients
+share it across rotating advertising addresses. Explicit local/remote pairing
+cancellation does not trigger a recovery scan. Nameless advertisers share a
+conservative rejection budget rather than receiving unlimited retries per address.
+
+Single-watch and gateway panes show recovery instructions with this phone/tablet's
+Bluetooth name: forget that device on the watch, remove the old watch entry from
+Android Bluetooth settings if present, then retry. **Open Bluetooth settings**
+provides a non-destructive route to review/remove existing bonds; Companion does
+not automatically delete bonds or infer a destructive target from a display name.
+The actual Android bond-broadcast reason is logged (`-1` if unavailable); controller
+authentication codes seen only in system logcat are not fabricated.
+
 ### Companion logging (WEARTAK-274)
 
 The device pane scrolls as a whole in short portrait/landscape ATAK panes. The
