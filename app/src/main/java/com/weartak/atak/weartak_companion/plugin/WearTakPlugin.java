@@ -1258,9 +1258,8 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
 
     private void addGarminIdentity(GarminConnectIqClient.WatchIdentity identity) {
         TextView row = new TextView(garminIdentityRows.getContext());
-        row.setTextSize(14);
-        row.setTypeface(null, android.graphics.Typeface.BOLD);
-        int padding = Math.round(12 * row.getResources().getDisplayMetrics().density);
+        row.setTextSize(13);
+        int padding = Math.round(8 * row.getResources().getDisplayMetrics().density);
         row.setPadding(padding, padding, padding, padding);
         String status = garminConnectionBadgeTV == null ? null : garminConnectionBadgeTV.getText().toString();
         if (identity != null && !identity.connected && !"PAUSED".equals(status)
@@ -2315,7 +2314,7 @@ public class WearTakPlugin implements IPlugin, IToolbarItem {
                     .build();
 
             // roots
-            deviceScreenRoot = paneView.findViewById(R.id.deviceScreenRoot);
+            deviceScreenRoot = paneView.findViewById(R.id.deviceScreenScroll);
             settingsScreenRoot = paneView.findViewById(R.id.settingsScreenRoot);
 
             // device screen

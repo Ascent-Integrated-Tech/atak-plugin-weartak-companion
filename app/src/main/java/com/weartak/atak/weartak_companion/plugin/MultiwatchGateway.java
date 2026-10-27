@@ -446,13 +446,20 @@ final class MultiwatchGateway {
     private void text(LinearLayout root, String value) {
         TextView view = new TextView(context);
         view.setText(value);
+        view.setTextSize(13);
         view.setTextColor(android.graphics.Color.WHITE);
-        view.setPadding(8, 8, 8, 8);
+        view.setPadding(dp(4), dp(4), dp(4), dp(4));
         root.addView(view);
     }
     private Button button(LinearLayout root, String label, Runnable action) {
         Button view = new Button(context);
         view.setText(label);
+        view.setTextSize(12);
+        view.setAllCaps(false);
+        view.setMinWidth(0);
+        view.setMinimumWidth(0);
+        view.setMinHeight(dp(48));
+        view.setPadding(dp(8), dp(4), dp(8), dp(4));
         view.setBackgroundResource(R.drawable.btn_gray);
         view.setTextColor(android.graphics.Color.WHITE);
         view.setOnClickListener(v -> action.run());
@@ -484,25 +491,30 @@ final class MultiwatchGateway {
                     + (peer.role == null || peer.role.isEmpty() ? "" : " / " + peer.role) + "\n")
                     + peer.forwarded + " received • " + peer.delivered + " queued to watch"
                     + (peer.error == null ? "" : "\n" + peer.error));
-            LinearLayout actions = new LinearLayout(context);
-            actions.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            panel.addView(actions);
             TextView badge = new TextView(context);
             badge.setText(peer.paused ? "NOT CONNECTED" : peer.status);
             badge.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            badge.setPadding(dp(8), 0, dp(8), 0);
-            badge.setLayoutParams(new LinearLayout.LayoutParams(0, dp(48), 1));
+            badge.setTextSize(12);
+            badge.setPadding(dp(8), dp(4), dp(8), dp(4));
+            badge.setMinHeight(dp(32));
+            badge.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
             WearTakPlugin.styleConnectionStatus(badge);
-            actions.addView(badge);
+            panel.addView(badge);
+            LinearLayout actions = new LinearLayout(context);
+            actions.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            panel.addView(actions);
             Button connect = button(actions, peer.paused ? "Connect" : "Disconnect", () -> {
                 if (peer.paused) activate(peer, true); else pause(peer);
                 render();
             });
-            LinearLayout.LayoutParams connectSize = new LinearLayout.LayoutParams(dp(112), dp(48));
-            connectSize.setMargins(dp(8), 0, dp(8), 0);
+            LinearLayout.LayoutParams connectSize = new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+            connectSize.setMargins(0, 0, dp(8), 0);
             connect.setLayoutParams(connectSize);
             button(actions, "Remove", () -> remove(peer))
-                    .setLayoutParams(new LinearLayout.LayoutParams(dp(80), dp(48)));
+                    .setLayoutParams(new LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         }
         for (WearTakBleClient.DiscoveredDevice device : discoveries.values()) {
             if (peers.containsKey(device.address)) continue;
